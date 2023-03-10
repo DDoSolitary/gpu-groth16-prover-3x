@@ -198,7 +198,7 @@ typedef std::unique_ptr<var, CudaFree> var_ptr;
 var_ptr
 allocate_memory(size_t nbytes, int dbg = 0) {
     var *mem = nullptr;
-    cudaMallocManaged(&mem, nbytes);
+    cudaMalloc(&mem, nbytes);
     if (mem == nullptr) {
         fprintf(stderr, "Failed to allocate enough device memory\n");
         abort();
@@ -208,6 +208,11 @@ allocate_memory(size_t nbytes, int dbg = 0) {
     return var_ptr(mem);
 }
 
+std::unique_ptr<var[]>
+allocate_host_memory(size_t nbytes) {
+	return std::make_unique<var[]>((nbytes + sizeof(var) - 1) / sizeof(var));
+}
+
 var_ptr
 load_scalars(size_t n, FILE *inputs)
 {
@@ -215,10 +220,12 @@ load_scalars(size_t n, FILE *inputs)
     size_t total_bytes = n * scalar_bytes;
 
     auto mem = allocate_memory(total_bytes);
-    if (fread((void *)mem.get(), total_bytes, 1, inputs) < 1) {
+    auto mem_h = allocate_host_memory(total_bytes);
+    if (fread((void *)mem_h.get(), total_bytes, 1, inputs) < 1) {
         fprintf(stderr, "Failed to read scalars\n");
         abort();
     }
+    cudaMemcpy(mem.get(), mem_h.get(), total_bytes, cudaMemcpyHostToDevice);
     return mem;
 }
 
@@ -236,18 +243,21 @@ load_points(size_t n, FILE *inputs)
     size_t total_jac_bytes = n * jac_pt_bytes;
 
     auto mem = allocate_memory(total_jac_bytes);
-    if (fread((void *)mem.get(), total_aff_bytes, 1, inputs) < 1) {
+    auto mem_h = allocate_host_memory(total_jac_bytes);
+    if (fread((void *)mem_h.get(), total_aff_bytes, 1, inputs) < 1) {
         fprintf(stderr, "Failed to read all curve poinst\n");
         abort();
     }
 
     // insert space for z-coordinates
-    char *cmem = reinterpret_cast<char *>(mem.get()); //lazy
+    char *cmem = reinterpret_cast<char *>(mem_h.get()); //lazy
     for (size_t i = n - 1; i > 0; --i) {
         char tmp_pt[aff_pt_bytes];
         memcpy(tmp_pt, cmem + i * aff_pt_bytes, aff_pt_bytes);
         memcpy(cmem + i * jac_pt_bytes, tmp_pt, aff_pt_bytes);
     }
+
+    cudaMemcpy(mem.get(), mem_h.get(), total_jac_bytes, cudaMemcpyHostToDevice);
     return mem;
 }
 
@@ -263,9 +273,11 @@ load_points_affine(size_t n, FILE *inputs)
     size_t total_aff_bytes = n * aff_pt_bytes;
 
     auto mem = allocate_memory(total_aff_bytes);
-    if (fread((void *)mem.get(), total_aff_bytes, 1, inputs) < 1) {
+    auto mem_h = allocate_host_memory(total_aff_bytes);
+    if (fread((void *)mem_h.get(), total_aff_bytes, 1, inputs) < 1) {
         fprintf(stderr, "Failed to read all curve poinst\n");
         abort();
     }
+    cudaMemcpy(mem.get(), mem_h.get(), total_aff_bytes, cudaMemcpyHostToDevice);
     return mem;
 }

@@ -125,18 +125,22 @@ void run_prover(
     FILE *preprocessed_file = fopen(preprocessed_path, "r");
 
     size_t space = ((m + 1) + R - 1) / R;
+    auto space_bytes = space * ECpe::NELTS * ELT_BYTES;
 
     //auto A_mults = load_points_affine<ECp>(((1U << C) - 1)*(m + 1), preprocessed_file);
     //auto out_A = allocate_memory(space * ECpe::NELTS * ELT_BYTES);
 
     auto B1_mults = load_points_affine<ECp>(((1U << C) - 1)*(m + 1), preprocessed_file);
-    auto out_B1 = allocate_memory(space * ECpe::NELTS * ELT_BYTES);
+    auto out_B1 = allocate_memory(space_bytes);
+    auto out_B1_h = allocate_host_memory(space_bytes);
 
     auto B2_mults = load_points_affine<ECpe>(((1U << C) - 1)*(m + 1), preprocessed_file);
-    auto out_B2 = allocate_memory(space * ECpe::NELTS * ELT_BYTES);
+    auto out_B2 = allocate_memory(space_bytes);
+    auto out_B2_h = allocate_host_memory(space_bytes);
 
     auto L_mults = load_points_affine<ECp>(((1U << C) - 1)*(m - 1), preprocessed_file);
-    auto out_L = allocate_memory(space * ECpe::NELTS * ELT_BYTES);
+    auto out_L = allocate_memory(space_bytes);
+    auto out_L_h = allocate_host_memory(space_bytes);
 
     fclose(preprocessed_file);
 
@@ -184,14 +188,17 @@ void run_prover(
     //cudaStreamSynchronize(sA);
     //G1 *evaluation_At = B::read_pt_ECp(out_A.get());
 
+    cudaMemcpyAsync(out_B1_h.get(), out_B1.get(), space_bytes, cudaMemcpyDeviceToHost, sB1);
     cudaStreamSynchronize(sB1);
-    G1 *evaluation_Bt1 = B::read_pt_ECp(out_B1.get());
+    G1 *evaluation_Bt1 = B::read_pt_ECp(out_B1_h.get());
 
+    cudaMemcpyAsync(out_B2_h.get(), out_B2.get(), space_bytes, cudaMemcpyDeviceToHost, sB2);
     cudaStreamSynchronize(sB2);
-    G2 *evaluation_Bt2 = B::read_pt_ECpe(out_B2.get());
+    G2 *evaluation_Bt2 = B::read_pt_ECpe(out_B2_h.get());
 
+    cudaMemcpyAsync(out_L_h.get(), out_L.get(), space_bytes, cudaMemcpyDeviceToHost, sL);
     cudaStreamSynchronize(sL);
-    G1 *evaluation_Lt = B::read_pt_ECp(out_L.get());
+    G1 *evaluation_Lt = B::read_pt_ECp(out_L_h.get());
 
     print_time(t_gpu, "gpu e2e");
 

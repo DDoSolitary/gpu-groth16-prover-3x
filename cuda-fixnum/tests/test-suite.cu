@@ -149,7 +149,7 @@ void check_result(
             buf_iter += fixnum_bytes*vec_len;
             tcase += skip;
         }
-        int r = arrays_are_equal(buf.data(), nbytes, arg->get_ptr(), nbytes);
+        int r = arrays_are_equal(buf.data(), nbytes, arg->get_cptr_host(), nbytes);
         EXPECT_TRUE(r < 0) << "failed near byte " << r << " in argument " << arg_idx;
         ++arg_idx;
     }
@@ -641,8 +641,8 @@ TYPED_TEST(TypedPrimitives, paillier) {
                 ptxt_array::template map<pdecrypt>(pt, ct, p, q, r, m);
 
                 size_t nbytes = vec_len * ctxt::BYTES;
-                const uint8_t *zptr = reinterpret_cast<const uint8_t *>(zeros->get_ptr());
-                const uint8_t *ptptr = reinterpret_cast<const uint8_t *>(pt->get_ptr());
+                const uint8_t *zptr = reinterpret_cast<const uint8_t *>(zeros->get_cptr_host());
+                const uint8_t *ptptr = reinterpret_cast<const uint8_t *>(pt->get_cptr_host()());
                 EXPECT_TRUE(arrays_are_equal(zptr, nbytes, ptptr, nbytes));
 
                 delete m;

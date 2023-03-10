@@ -49,9 +49,11 @@ fixnum_array<fixnum> *
 fixnum_array<fixnum>::create(size_t nelts) {
     fixnum_array *a = new fixnum_array;
     a->nelts = nelts;
+    a->mem_loc = MEM_UNINIT;
     if (nelts > 0) {
         size_t nbytes = nelts * fixnum::BYTES;
-        cuda_malloc_managed(&a->ptr, nbytes);
+        cuda_malloc(&a->ptr_dev, nbytes);
+        a->ptr_host = (fixnum *)malloc(nbytes);
     }
     return a;
 }
@@ -61,7 +63,8 @@ template< typename T >
 fixnum_array<fixnum> *
 fixnum_array<fixnum>::create(size_t nelts, T init) {
     fixnum_array *a = create(nelts);
-    byte *p = as_byte_ptr(a->ptr);
+    a->mem_loc = MEM_HOST;
+    byte *p = as_byte_ptr(a->ptr_host);
 
     const byte *in = as_byte_ptr(&init);
     byte elt[fixnum::BYTES];
@@ -82,8 +85,9 @@ fixnum_array<fixnum>::create(const byte *data, size_t total_bytes, size_t bytes_
 
     size_t nelts = ceilquo(total_bytes, bytes_per_elt);
     fixnum_array *a = create(nelts);
+    a->mem_loc = MEM_HOST;
 
-    byte *p = as_byte_ptr(a->ptr);
+    byte *p = as_byte_ptr(a->ptr_host);
     const byte *d = data;
     for (size_t i = 0; i < nelts; ++i) {
         fixnum::from_bytes(p, d, bytes_per_elt);
@@ -91,6 +95,37 @@ fixnum_array<fixnum>::create(const byte *data, size_t total_bytes, size_t bytes_
         d += bytes_per_elt;
     }
     return a;
+}
+
+template< typename fixnum >
+void
+fixnum_array<fixnum>::fetch_from_dev() const {
+    if (mem_loc == MEM_DEV) {
+        cuda_memcpy_from_device(ptr_host, ptr_dev, nelts * fixnum::BYTES);
+    }
+}
+
+template< typename fixnum >
+void
+fixnum_array<fixnum>::fetch_to_dev() const {
+    if (mem_loc == MEM_HOST) {
+        cuda_memcpy_to_device(ptr_dev, ptr_host, nelts * fixnum::BYTES);
+    }
+}
+
+template< typename fixnum >
+byte *
+fixnum_array<fixnum>::get_ptr_host() {
+    fetch_from_dev();
+    mem_loc = MEM_HOST;
+    return as_byte_ptr(ptr_host);
+}
+
+template< typename fixnum >
+const byte *
+fixnum_array<fixnum>::get_cptr_host() const {
+    fetch_from_dev();
+    return as_byte_ptr(ptr_host);
 }
 
 // TODO: This doesn't belong here.
@@ -110,7 +145,6 @@ rotate_array(digit *out, const digit *in, int nelts, int words_per_elt, int i) {
     std::copy(in + nwords - pivot, in + nwords, out);
 }
 
-
 // TODO: Find a way to return a wrapper that just modifies the requested indices
 // on the fly, rather than copying the whole array. Hard part will be making it
 // work with map/dispatch.
@@ -118,8 +152,8 @@ template< typename fixnum >
 fixnum_array<fixnum> *
 fixnum_array<fixnum>::rotate(int i) {
     fixnum_array *a = create(length());
-    byte *p = as_byte_ptr(a->ptr);
-    const byte *q = as_byte_ptr(ptr);
+    byte *p = a->get_ptr_host();
+    const byte *q = get_cptr_host();
     rotate_array(p, q, nelts, fixnum::BYTES, i);
     return a;
 }
@@ -128,8 +162,8 @@ template< typename fixnum >
 fixnum_array<fixnum> *
 fixnum_array<fixnum>::repeat(int ntimes) {
     fixnum_array *a = create(length() * ntimes);
-    byte *p = as_byte_ptr(a->ptr);
-    const byte *q = as_byte_ptr(ptr);
+    byte *p = a->get_ptr_host();
+    const byte *q = get_cptr_host();
     int nbytes = nelts * fixnum::BYTES;
     for (int i = 0; i < ntimes; ++i, p += nbytes)
         std::copy(q, q + nbytes, p);
@@ -140,8 +174,8 @@ template< typename fixnum >
 fixnum_array<fixnum> *
 fixnum_array<fixnum>::rotations(int ntimes) {
     fixnum_array *a = create(nelts * ntimes);
-    byte *p = as_byte_ptr(a->ptr);
-    const byte *q = as_byte_ptr(ptr);
+    byte *p = a->get_ptr_host();
+    const byte *q = get_cptr_host();
     int nbytes = nelts * fixnum::BYTES;
     for (int i = 0; i < ntimes; ++i, p += nbytes)
         rotate_array(p, q, nelts, fixnum::BYTES, i);
@@ -157,14 +191,16 @@ fixnum_array<fixnum>::set(int idx, const byte *data, size_t nbytes) {
         return -1;
 
     int off = idx * fixnum::BYTES;
-    const byte *q = as_byte_ptr(ptr);
+    byte *q = get_ptr_host();
     return fixnum::from_bytes(q + off, data, nbytes);
 }
 
 template< typename fixnum >
 fixnum_array<fixnum>::~fixnum_array() {
-    if (nelts > 0)
-        cuda_free(ptr);
+    if (nelts > 0) {
+        cuda_free(ptr_dev);
+        free(ptr_host);
+    }
 }
 
 template< typename fixnum >
@@ -181,7 +217,7 @@ fixnum_array<fixnum>::retrieve_into(byte *dest, size_t dest_space, int idx) cons
         // bounds" error.
         return 0;
     }
-    const byte *q = as_byte_ptr(ptr);
+    const byte *q = get_cptr_host();
     return fixnum::to_bytes(dest, dest_space, q + idx * fixnum::BYTES);
 }
 
@@ -189,7 +225,7 @@ fixnum_array<fixnum>::retrieve_into(byte *dest, size_t dest_space, int idx) cons
 template< typename fixnum >
 void
 fixnum_array<fixnum>::retrieve_all(byte *dest, size_t dest_space, int *dest_nelts) const {
-    const byte *p = as_byte_ptr(ptr);
+    const byte *p = get_cptr_host();
     byte *d = dest;
     int max_dest_nelts = dest_space / fixnum::BYTES;
     *dest_nelts = std::min(nelts, max_dest_nelts);
@@ -287,13 +323,15 @@ fixnum_array<fixnum>::map(Args... args) {
 
     // nblocks > 0 iff nelts > 0
     if (nblocks > 0) {
+        (int[]){0, (args->fetch_to_dev(), args->mem_loc = MEM_DEV, 0)...};
+
         cudaStream_t stream;
         cuda_check(cudaStreamCreate(&stream), "create stream");
 //         cuda_stream_attach_mem(stream, src->ptr);
 //         cuda_stream_attach_mem(stream, ptr);
         cuda_check(cudaStreamSynchronize(stream), "stream sync");
 
-        dispatch<Func, fixnum ><<< nblocks, BLOCK_SIZE, 0, stream >>>(nelts, args->ptr...);
+        dispatch<Func, fixnum ><<< nblocks, BLOCK_SIZE, 0, stream >>>(nelts, args->ptr_dev...);
 
         cuda_check(cudaPeekAtLastError(), "kernel invocation/run");
         cuda_check(cudaStreamSynchronize(stream), "stream sync");

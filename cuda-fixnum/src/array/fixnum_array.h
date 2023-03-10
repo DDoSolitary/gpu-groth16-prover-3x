@@ -21,7 +21,7 @@ public:
     fixnum_array *rotate(int i);
     fixnum_array *rotations(int ntimes);
     fixnum_array *repeat(int ntimes);
-    const byte *get_ptr() const { return reinterpret_cast<const byte *>(ptr); }
+    const byte *get_cptr_host() const;
 
     ~fixnum_array();
 
@@ -35,13 +35,20 @@ public:
     static void map(Args... args);
 
 private:
-    fixnum *ptr;
+    enum { MEM_UNINIT = -1, MEM_HOST = 0, MEM_DEV = 1 };
+
+    fixnum *ptr_dev, *ptr_host;
+    int mem_loc;
     int nelts;
 
     fixnum_array() {  }
 
     fixnum_array(const fixnum_array &);
     fixnum_array &operator=(const fixnum_array &);
+
+    void fetch_from_dev() const;
+    void fetch_to_dev() const;
+    byte *get_ptr_host();
 };
 
 template< typename fixnum >
