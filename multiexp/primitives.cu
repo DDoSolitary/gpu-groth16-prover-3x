@@ -8,81 +8,20 @@ namespace internal {
     typedef std::uint32_t u32;
     typedef std::uint64_t u64;
 
-    __device__ __forceinline__
-    void
-    addc(int &s, int a, int b) {
-        asm ("addc.s32 %0, %1, %2;"
-             : "=r"(s)
-             : "r"(a), "r" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    addc(u32 &s, u32 a, u32 b) {
-        asm ("addc.u32 %0, %1, %2;"
-             : "=r"(s)
-             : "r"(a), "r" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    add_cc(u32 &s, u32 a, u32 b) {
-        asm ("add.cc.u32 %0, %1, %2;"
-             : "=r"(s)
-             : "r"(a), "r" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    addc_cc(u32 &s, u32 a, u32 b) {
-        asm ("addc.cc.u32 %0, %1, %2;"
-             : "=r"(s)
-             : "r"(a), "r" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    addc(u64 &s, u64 a, u64 b) {
-        asm ("addc.u64 %0, %1, %2;"
-             : "=l"(s)
-             : "l"(a), "l" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    add_cc(u64 &s, u64 a, u64 b) {
-        asm ("add.cc.u64 %0, %1, %2;"
-             : "=l"(s)
-             : "l"(a), "l" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    addc_cc(u64 &s, u64 a, u64 b) {
-        asm ("addc.cc.u64 %0, %1, %2;"
-             : "=l"(s)
-             : "l"(a), "l" (b));
-    }
-
     /*
      * hi * 2^n + lo = a * b
      */
     __device__ __forceinline__
     void
     mul_hi(u32 &hi, u32 a, u32 b) {
-        asm ("mul.hi.u32 %0, %1, %2;"
-             : "=r"(hi)
-             : "r"(a), "r"(b));
+        hi = __umulhi(a, b);
     }
 
     __device__ __forceinline__
     void
     mul_hi(u64 &hi, u64 a, u64 b) {
-        asm ("mul.hi.u64 %0, %1, %2;"
-             : "=l"(hi)
-             : "l"(a), "l"(b));
+        hi = __umul64hi(a, b);
     }
-
 
     /*
      * hi * 2^n + lo = a * b
@@ -90,26 +29,16 @@ namespace internal {
     __device__ __forceinline__
     void
     mul_wide(u32 &hi, u32 &lo, u32 a, u32 b) {
-        // TODO: Measure performance difference between this and the
-        // equivalent:
-        //   mul.hi.u32 %0, %2, %3
-        //   mul.lo.u32 %1, %2, %3
-        asm ("{\n\t"
-             " .reg .u64 tmp;\n\t"
-             " mul.wide.u32 tmp, %2, %3;\n\t"
-             " mov.b64 { %1, %0 }, tmp;\n\t"
-             "}"
-             : "=r"(hi), "=r"(lo)
-             : "r"(a), "r"(b));
+        u64 t = (u64)a * b;
+        hi = t >> 32;
+        lo = t;
     }
 
     __device__ __forceinline__
     void
     mul_wide(u64 &hi, u64 &lo, u64 a, u64 b) {
-        asm ("mul.hi.u64 %0, %2, %3;\n\t"
-             "mul.lo.u64 %1, %2, %3;"
-             : "=l"(hi), "=l"(lo)
-             : "l"(a), "l"(b));
+        hi = __umul64hi(a, b);
+        lo = a * b;
     }
 
     /*
@@ -118,130 +47,57 @@ namespace internal {
     __device__ __forceinline__
     void
     mad_wide(u32 &hi, u32 &lo, u32 a, u32 b, u32 c) {
-        asm ("{\n\t"
-             " .reg .u64 tmp;\n\t"
-             " mad.wide.u32 tmp, %2, %3, %4;\n\t"
-             " mov.b64 { %1, %0 }, tmp;\n\t"
-             "}"
-             : "=r"(hi), "=r"(lo)
-             : "r"(a), "r"(b), "r"(c));
+        u64 t = (u64)a * b + c;
+        hi = t >> 32;
+        lo = t;
     }
 
     __device__ __forceinline__
     void
     mad_wide(u64 &hi, u64 &lo, u64 a, u64 b, u64 c) {
-        asm ("mad.lo.cc.u64 %1, %2, %3, %4;\n\t"
-             "madc.hi.u64 %0, %2, %3, 0;"
-             : "=l"(hi), "=l"(lo)
-             : "l"(a), "l" (b), "l"(c));
+        u32 a_lo = a, a_hi = a >> 32;
+        u32 b_lo = b, b_hi = b >> 32;
+        u32 c_lo = c, c_hi = c >> 32;
+        u64 t0 = (u64)a_lo * b_lo + c_lo;
+        u64 t1 = (u64)a_lo * b_hi + c_hi;
+        u64 t2 = (u64)b_lo * a_hi;
+        u64 t3 = (u64)a_hi * b_hi;
+        u64 x = (t0 >> 32) + (u32)t1 + (u32)t2;
+        hi = (x >> 32) + (t1 >> 32) + (t2 >> 32) + t3;
+        lo = (x << 32) | (u32)t0;
     }
 
     // lo = a * b + c (mod 2^n)
     __device__ __forceinline__
     void
     mad_lo(u32 &lo, u32 a, u32 b, u32 c) {
-        asm ("mad.lo.u32 %0, %1, %2, %3;"
-             : "=r"(lo)
-             : "r"(a), "r" (b), "r"(c));
+        lo = a * b + c;
     }
 
     __device__ __forceinline__
     void
     mad_lo(u64 &lo, u64 a, u64 b, u64 c) {
-        asm ("mad.lo.u64 %0, %1, %2, %3;"
-             : "=l"(lo)
-             : "l"(a), "l" (b), "l"(c));
-    }
-
-
-    // as above but with carry in cy
-    __device__ __forceinline__
-    void
-    mad_lo_cc(u32 &lo, u32 a, u32 b, u32 c) {
-        asm ("mad.lo.cc.u32 %0, %1, %2, %3;"
-             : "=r"(lo)
-             : "r"(a), "r" (b), "r"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    mad_lo_cc(u64 &lo, u64 a, u64 b, u64 c) {
-        asm ("mad.lo.cc.u64 %0, %1, %2, %3;"
-             : "=l"(lo)
-             : "l"(a), "l" (b), "l"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    madc_lo_cc(u32 &lo, u32 a, u32 b, u32 c) {
-        asm ("madc.lo.cc.u32 %0, %1, %2, %3;"
-             : "=r"(lo)
-             : "r"(a), "r" (b), "r"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    madc_lo_cc(u64 &lo, u64 a, u64 b, u64 c) {
-        asm ("madc.lo.cc.u64 %0, %1, %2, %3;"
-             : "=l"(lo)
-             : "l"(a), "l" (b), "l"(c));
+        lo = a * b + c;
     }
 
     __device__ __forceinline__
     void
     mad_hi(u32 &hi, u32 a, u32 b, u32 c) {
-        asm ("mad.hi.u32 %0, %1, %2, %3;"
-             : "=r"(hi)
-             : "r"(a), "r" (b), "r"(c));
+        hi = __umulhi(a, b) + c;
     }
 
     __device__ __forceinline__
     void
     mad_hi(u64 &hi, u64 a, u64 b, u64 c) {
-        asm ("mad.hi.u64 %0, %1, %2, %3;"
-             : "=l"(hi)
-             : "l"(a), "l" (b), "l"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    mad_hi_cc(u32 &hi, u32 a, u32 b, u32 c) {
-        asm ("mad.hi.cc.u32 %0, %1, %2, %3;"
-             : "=r"(hi)
-             : "r"(a), "r" (b), "r"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    mad_hi_cc(u64 &hi, u64 a, u64 b, u64 c) {
-        asm ("mad.hi.cc.u64 %0, %1, %2, %3;"
-             : "=l"(hi)
-             : "l"(a), "l" (b), "l"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    madc_hi_cc(u32 &hi, u32 a, u32 b, u32 c) {
-        asm ("madc.hi.cc.u32 %0, %1, %2, %3;"
-             : "=r"(hi)
-             : "r"(a), "r" (b), "r"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    madc_hi_cc(u64 &hi, u64 a, u64 b, u64 c) {
-        asm ("madc.hi.cc.u64 %0, %1, %2, %3;\n\t"
-             : "=l"(hi)
-             : "l"(a), "l" (b), "l"(c));
+        hi = __umul64hi(a, b) + c;
     }
 
     // Source: https://docs.nvidia.com/cuda/parallel-thread-execution/#logic-and-shift-instructions-shf
     __device__ __forceinline__
     void
     lshift(u32 &out_hi, u32 &out_lo, u32 in_hi, u32 in_lo, unsigned b) {
-        asm ("shf.l.clamp.b32 %1, %2, %3, %4;\n\t"
-             "shl.b32 %0, %2, %4;"
-             : "=r"(out_lo), "=r"(out_hi) : "r"(in_lo), "r"(in_hi), "r"(b));
+        out_hi = __funnelshift_lc(in_lo, in_hi, b);
+        out_lo = in_lo << b;
     }
 
     /*
@@ -252,26 +108,11 @@ namespace internal {
     void
     lshift_b32(u64 &out_hi, u64 &out_lo, u64 in_hi, u64 in_lo, unsigned b) {
         assert(b <= 32);
-        asm ("{\n\t"
-             " .reg .u32 t1;\n\t"
-             " .reg .u32 t2;\n\t"
-             " .reg .u32 t3;\n\t"
-             " .reg .u32 t4;\n\t"
-             " .reg .u32 t5;\n\t"
-             " .reg .u32 t6;\n\t"
-             " .reg .u32 t7;\n\t"
-             " .reg .u32 t8;\n\t"
-             // (t4, t3, t2, t1) = (in_hi, in_lo)
-             " mov.b64 { t3, t4 }, %3;\n\t"
-             " mov.b64 { t1, t2 }, %2;\n\t"
-             " shf.l.clamp.b32 t8, t3, t4, %4;\n\t"
-             " shf.l.clamp.b32 t7, t2, t3, %4;\n\t"
-             " shf.l.clamp.b32 t6, t1, t2, %4;\n\t"
-             " shl.b32 t5, t1, %4;\n\t"
-             " mov.b64 %1, { t7, t8 };\n\t"
-             " mov.b64 %0, { t5, t6 };\n\t"
-             "}"
-             : "=l"(out_lo), "=l"(out_hi) : "l"(in_lo), "l"(in_hi), "r"(b));
+        auto t3 = __funnelshift_lc(in_hi, in_hi >> 32, b);
+        auto t2 = __funnelshift_lc(in_lo >> 32, in_hi, b);
+        auto t1 = __funnelshift_lc(in_lo, in_lo >> 32, b);
+        out_hi = ((uint64_t)t3 << 32) | t2;
+        out_lo = ((uint64_t)t1 << 32) | ((uint32_t)in_lo << b);
     }
 
     __device__ __forceinline__
@@ -287,9 +128,8 @@ namespace internal {
     __device__ __forceinline__
     void
     rshift(u32 &out_hi, u32 &out_lo, u32 in_hi, u32 in_lo, unsigned b) {
-        asm ("shf.r.clamp.b32 %0, %2, %3, %4;\n\t"
-             "shr.b32 %1, %2, %4;"
-             : "=r"(out_lo), "=r"(out_hi) : "r"(in_lo), "r"(in_hi), "r"(b));
+        out_lo = __funnelshift_rc(in_lo, in_hi, b);
+        out_hi = in_hi >> b;
     }
 
     /*
@@ -300,26 +140,11 @@ namespace internal {
     void
     rshift_b32(u64 &out_hi, u64 &out_lo, u64 in_hi, u64 in_lo, unsigned b) {
         assert(b <= 32);
-        asm ("{\n\t"
-             " .reg .u32 t1;\n\t"
-             " .reg .u32 t2;\n\t"
-             " .reg .u32 t3;\n\t"
-             " .reg .u32 t4;\n\t"
-             " .reg .u32 t5;\n\t"
-             " .reg .u32 t6;\n\t"
-             " .reg .u32 t7;\n\t"
-             " .reg .u32 t8;\n\t"
-             // (t4, t3, t2, t1) = (in_hi, in_lo)
-             " mov.b64 { t1, t2 }, %2;\n\t"
-             " mov.b64 { t3, t4 }, %3;\n\t"
-             " shf.r.clamp.b32 t5, t1, t2, %4;\n\t"
-             " shf.r.clamp.b32 t6, t2, t3, %4;\n\t"
-             " shf.r.clamp.b32 t7, t3, t4, %4;\n\t"
-             " shr.b32 t8, t4, %4;\n\t"
-             " mov.b64 %0, { t5, t6 };\n\t"
-             " mov.b64 %1, { t7, t8 };\n\t"
-             "}"
-             : "=l"(out_lo), "=l"(out_hi) : "l"(in_lo), "l"(in_hi), "r"(b));
+        auto t1 = __funnelshift_rc(in_lo, in_lo >> 32, b);
+        auto t2 = __funnelshift_rc(in_lo >> 32, in_hi, b);
+        auto t3 = __funnelshift_rc(in_hi, in_hi >> 32, b);
+        out_lo = ((uint64_t)t2 << 32) | t1;
+        out_hi = ((uint64_t)(((uint32_t)(in_hi >> 32)) >> b) << 32) | t3;
     }
 
     __device__ __forceinline__
@@ -337,17 +162,13 @@ namespace internal {
     __device__ __forceinline__
     int
     clz(u32 x) {
-        int n;
-        asm ("clz.b32 %0, %1;" : "=r"(n) : "r"(x));
-        return n;
+        return __clz(x);
     }
 
     __device__ __forceinline__
     int
     clz(u64 x) {
-        int n;
-        asm ("clz.b64 %0, %1;" : "=r"(n) : "l"(x));
-        return n;
+        return __clzll(x);
     }
 
     /*
@@ -356,51 +177,53 @@ namespace internal {
     __device__ __forceinline__
     int
     ctz(u32 x) {
-        int n;
-        asm ("{\n\t"
-             " .reg .u32 tmp;\n\t"
-             " brev.b32 tmp, %1;\n\t"
-             " clz.b32 %0, tmp;\n\t"
-             "}"
-             : "=r"(n) : "r"(x));
-        return n;
+        return __clz(__brev(x));
     }
 
     __device__ __forceinline__
     int
     ctz(u64 x) {
-        int n;
-        asm ("{\n\t"
-             " .reg .u64 tmp;\n\t"
-             " brev.b64 tmp, %1;\n\t"
-             " clz.b64 %0, tmp;\n\t"
-             "}"
-             : "=r"(n) : "l"(x));
-        return n;
+        return __clzll(__brevll(x));
     }
 
     __device__ __forceinline__
     void
     min(u32 &m, u32 a, u32 b) {
-        asm ("min.u32 %0, %1, %2;" : "=r"(m) : "r"(a), "r"(b));
+#ifdef __ILUVATAR__
+        m = std::min(a, b);
+#else
+        m = ::min(a, b);
+#endif
     }
 
     __device__ __forceinline__
     void
     min(u64 &m, u64 a, u64 b) {
-        asm ("min.u64 %0, %1, %2;" : "=l"(m) : "l"(a), "l"(b));
+#ifdef __ILUVATAR__
+        m = std::min(a, b);
+#else
+        m = ::min(a, b);
+#endif
     }
 
     __device__ __forceinline__
     void
     max(u32 &m, u32 a, u32 b) {
-        asm ("max.u32 %0, %1, %2;" : "=r"(m) : "r"(a), "r"(b));
+#ifdef __ILUVATAR__
+        m = std::max(a, b);
+#else
+        m = ::max(a, b);
+#endif
     }
 
     __device__ __forceinline__
     void
     max(u64 &m, u64 a, u64 b) {
-        asm ("max.u64 %0, %1, %2;" : "=l"(m) : "l"(a), "l"(b));
+#ifdef __ILUVATAR__
+        m = std::max(a, b);
+#else
+        m = ::max(a, b);
+#endif
     }
 
     __device__ __forceinline__

@@ -17,9 +17,6 @@ set(EXECUTABLE_OUTPUT_PATH "${PROJECT_BINARY_DIR}/bin")
 #string(APPEND CMAKE_CUDA_FLAGS " ${CUDA_ARCH_FLAGS_SPACES}")
 #string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler -Wall,-Wextra")
 #set(CMAKE_CUDA_FLAGS_DEBUG "-g -G")
-if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
-  set(CMAKE_CUDA_ARCHITECTURES 60)
-endif()
 
 # source
 include_directories(src)

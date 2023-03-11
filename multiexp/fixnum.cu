@@ -80,8 +80,8 @@ struct digit {
     __device__ __forceinline__
     static void
     mad_lo_cy(var &lo, int &cy, var a, var b, var c) {
-        internal::mad_lo_cc(lo, a, b, c);
-        internal::addc(cy, cy, 0);
+        internal::mad_lo(lo, a, b, c);
+        cy += lo < c;
     }
 
     __device__ __forceinline__
@@ -94,8 +94,8 @@ struct digit {
     __device__ __forceinline__
     static void
     mad_hi_cy(var &hi, int &cy, var a, var b, var c) {
-        internal::mad_hi_cc(hi, a, b, c);
-        internal::addc(cy, cy, 0);
+        internal::mad_hi(hi, a, b, c);
+        cy += hi < c;
     }
 };
 
