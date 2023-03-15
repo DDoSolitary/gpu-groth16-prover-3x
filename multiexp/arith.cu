@@ -34,7 +34,7 @@ const var X_MOD_Q[BIG_WIDTH] = {
 //template< const var *mod_, const var ninv_mod_, const var *binpow_mod_ >
 //struct modulus_info {
 struct MNT4_MOD {
-    __device__ __forceinline__ static int lane() { return fixnum::layout().thread_rank(); }
+    __device__ __forceinline__ static int lane() { return fixnum::thread_rank(); }
     __device__ __forceinline__ static var mod() { return MOD_Q[lane()]; }
     static constexpr var ninv_mod = Q_NINV_MOD;
     __device__ __forceinline__ static var monty_one() { return X_MOD_Q[lane()]; }
@@ -70,7 +70,7 @@ const var X_MOD_R[BIG_WIDTH] = {
 };
 
 struct MNT6_MOD {
-    __device__ __forceinline__ static int lane() { return fixnum::layout().thread_rank(); }
+    __device__ __forceinline__ static int lane() { return fixnum::thread_rank(); }
     __device__ __forceinline__ static var mod() { return MOD_R[lane()]; }
     static constexpr var ninv_mod = R_NINV_MOD;
     __device__ __forceinline__ static var monty_one() { return X_MOD_R[lane()]; }
@@ -227,14 +227,14 @@ struct Fp {
     __device__
     static void
     load(Fp &x, const var *mem) {
-        int t = fixnum::layout().thread_rank();
+        int t = fixnum::thread_rank();
         x.a = (t < ELT_LIMBS) ? mem[t] : 0UL;
     }
 
     __device__
     static void
     store(var *mem, const Fp &x) {
-        int t = fixnum::layout().thread_rank();
+        int t = fixnum::thread_rank();
         if (t < ELT_LIMBS)
             mem[t] = x.a;
     }
@@ -288,7 +288,7 @@ struct Fp {
     static void
     mul(Fp &zz, const Fp &xx, const Fp &yy) {
         auto grp = fixnum::layout();
-        int L = grp.thread_rank();
+        int L = fixnum::thread_rank();
         var mod = modulus_info::mod();
 
         var x = xx.a, y = yy.a, z = digit::zero();

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cooperative_groups.h>
+#include <cub/cub.cuh>
 
 #include "primitives.cu"
 
@@ -99,19 +99,59 @@ struct digit {
     }
 };
 
+template<int WIDTH>
+class fixnum_layout {
+#ifdef __ILUVATAR__
+    typedef uint64_t Mask;
+#else
+    typedef uint32_t Mask;
+#endif
+    Mask mask;
+
+public:
+    __device__
+    fixnum_layout() {
+        mask = (Mask)-1 >> (CUB_PTX_WARP_THREADS - WIDTH);
+        mask <<= cub::LaneId() & ~(WIDTH - 1);
+    }
+
+    __device__ __forceinline__
+    Mask ballot(int val) {
+        return (cub::WARP_BALLOT(val, mask) & mask) >> (cub::LaneId() & ~(WIDTH - 1));
+    }
+
+    template<typename T>
+    __device__ __forceinline__
+    T shfl(T val, int src) {
+        return cub::ShuffleIndex<WIDTH>(val, src, mask);
+    }
+
+    template<typename T>
+    __device__ __forceinline__
+    T shfl_up(T val, int offset) {
+        return cub::ShuffleUp<WIDTH>(val, offset, 0, mask);
+    }
+
+    template<typename T>
+    __device__ __forceinline__
+    T shfl_down(T val, int src) {
+        return cub::ShuffleDown<WIDTH>(val, src, WIDTH - 1, mask);
+    }
+};
 
 struct fixnum {
     // 16 because digit::BITS * 16 = 1024 > 768 = digit::bits * 12
     // Must be < 32 for effective_carries to work.
     static constexpr unsigned WIDTH = 16;
 
-    // TODO: Previous versiona allowed 'auto' return type here instead
-    // of this mess
     __device__
-    static cooperative_groups::thread_block_tile<WIDTH>
-    layout() {
-        return cooperative_groups::tiled_partition<WIDTH>(
-            cooperative_groups::this_thread_block());
+    static fixnum_layout<WIDTH> layout() {
+        return {};
+    }
+
+    __device__ __forceinline__
+    static unsigned thread_rank() {
+        return cub::LaneId() & (WIDTH - 1);
     }
 
     __device__ __forceinline__
@@ -121,7 +161,7 @@ struct fixnum {
     __device__ __forceinline__
     static var
     one() {
-        auto t = layout().thread_rank();
+        auto t = thread_rank();
         return (var)(t == 0);
     }
 
@@ -159,7 +199,7 @@ struct fixnum {
         sub_br(r, br_lo, a, b);
     }
 
-    __device__ static uint32_t nonzero_mask(var r) {
+    __device__ static auto nonzero_mask(var r) {
         return fixnum::layout().ballot( ! digit::is_zero(r));
     }
 
@@ -168,10 +208,8 @@ struct fixnum {
     }
 
     __device__ static int most_sig_dig(var x) {
-        enum { UINT32_BITS = 8 * sizeof(uint32_t) };
-
-        uint32_t a = nonzero_mask(x);
-        return UINT32_BITS - (internal::clz(a) + 1);
+        auto a = nonzero_mask(x);
+        return (sizeof(a) * 8) - (internal::clz(a) + 1);
     }
 
     __device__ static int cmp(var x, var y) {
@@ -185,14 +223,13 @@ struct fixnum {
     __device__
     static var
     effective_carries(int &cy_hi, int propagate, int cy) {
-        uint32_t allcarries, p, g;
         auto grp = fixnum::layout();
 
-        g = grp.ballot(cy);                       // carry generate
-        p = grp.ballot(propagate);                // carry propagate
-        allcarries = (p | g) + g;                 // propagate all carries
-        cy_hi = (allcarries >> grp.size()) & 1;   // detect hi overflow
+        auto g = grp.ballot(cy);                  // carry generate
+        auto p = grp.ballot(propagate);           // carry propagate
+        auto allcarries = (p | g) + g;            // propagate all carries
+        cy_hi = (allcarries >> WIDTH) & 1;        // detect hi overflow
         allcarries = (allcarries ^ p) | (g << 1); // get effective carries
-        return (allcarries >> grp.thread_rank()) & 1;
+        return (allcarries >> thread_rank()) & 1;
     }
 };
