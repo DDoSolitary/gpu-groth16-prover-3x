@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cub/cub.cuh>
 #include <cstdint>
 
 namespace cuFIXNUM {
@@ -8,7 +9,7 @@ namespace cuFIXNUM {
 // considered a constant value, so cannot be used in constexprs or
 // template parameters or static_asserts. Hence we must use WARPSIZE
 // instead.
-static constexpr int WARPSIZE = 32;
+// static constexpr int WARPSIZE = 32;
 
 // TODO: Tidy up nomenclature: SUBWARP -> Slot
 /*
@@ -30,13 +31,19 @@ static constexpr int WARPSIZE = 32;
  * actually achieves anything.
  */
 
-template<typename T, int width = WARPSIZE>
+template<typename T, int width>
 struct slot_layout
 {
-    static_assert(width > 0 && !(WARPSIZE & (width - 1)),
-        "slot width must be a positive divisor of warpSize (=32)");
+    static_assert(width > 0 && !(CUB_PTX_WARP_THREADS & (width - 1)),
+        "slot width must be a positive divisor of warpSize");
 
     static constexpr int WIDTH = width;
+
+#ifdef ILUVATAR
+    typedef uint64_t Mask;
+#else
+    typedef uint32_t Mask;
+#endif
 
     /*
      * Return the lane index within the slot.
@@ -47,7 +54,7 @@ struct slot_layout
     int
     laneIdx() {
         // threadIdx.x % width = threadIdx.x & (width - 1) since width = 2^n
-        return threadIdx.x & (width - 1);
+        return cub::LaneId() & (width - 1);
 
         // TODO: Replace above with?
         // int L;
@@ -68,9 +75,9 @@ struct slot_layout
      * Useful in conjunction with offset() and __ballot().
      */
     static __device__ __forceinline__
-    std::uint32_t
+    Mask
     mask() {
-        return ((1UL << width) - 1UL) << offset();
+        return ((Mask)-1 >> (CUB_PTX_WARP_THREADS - width)) << offset();
     }
 
     /*
@@ -91,20 +98,7 @@ struct slot_layout
     static __device__ __forceinline__
     int
     offset() {
-        // Thread index within the (full) warp.
-        int tid = threadIdx.x & (WARPSIZE - 1);
-
-        // Recall: x mod y = x - y*floor(x/y), so
-        //
-        //   slotOffset = width * floor(threadIdx/width)
-        //                 = threadIdx - (threadIdx % width)
-        //                 = threadIdx - (threadIdx & (width - 1))
-        //                 // TODO: Do use this last formulation!
-        //                 = set bottom log2(width) bits of threadIdx to zero
-        //                 = T & ~mask ??  or "(T >> width) << width"
-        //
-        // since width = 2^n.
-        return tid - (tid & (width - 1));
+        return cub::LaneId() & ~(width - 1);
     }
 
     /*
@@ -112,9 +106,10 @@ struct slot_layout
      * of size width.
      */
     __device__ __forceinline__
-    static uint32_t
+    static Mask
     ballot(int tst) {
-        uint32_t b = __ballot_sync(mask(), tst);
+        auto m = mask();
+        auto b = cub::WARP_BALLOT(tst, m) & m;
         return b >> offset();
     }
 
@@ -124,19 +119,19 @@ struct slot_layout
     __device__ __forceinline__
     static T
     shfl(T var, int srcLane) {
-        return __shfl_sync(mask(), var, srcLane, width);
+        return cub::ShuffleIndex<width>(var, srcLane, mask());
     }
 
     __device__ __forceinline__
     static T
     shfl_up(T var, unsigned int delta) {
-        return __shfl_up_sync(mask(), var, delta, width);
+        return cub::ShuffleUp<width>(var, delta, 0, mask());
     }
 
     __device__ __forceinline__
     static T
     shfl_down(T var, unsigned int delta) {
-        return __shfl_down_sync(mask(), var, delta, width);
+        return cub::ShuffleDown<width>(var, delta, toplaneIdx, mask());
     }
 
     // NB: Assumes delta <= width + L. (There should be no reason for

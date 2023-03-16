@@ -394,7 +394,7 @@ public:
      * the ith digit of r is nonzero. In particular, result is zero
      * iff r is zero.
      */
-    __device__ static uint32_t nonzero_mask(fixnum r) {
+    __device__ static auto nonzero_mask(fixnum r) {
         return layout::ballot( ! digit::is_zero(r));
     }
 
@@ -415,13 +415,8 @@ public:
      * zero.
      */
     __device__ static int most_sig_dig(fixnum x) {
-        // FIXME: Should be able to get this value from limits or numeric_limits
-        // or whatever.
-        enum { UINT32_BITS = 8 * sizeof(uint32_t) };
-        static_assert(UINT32_BITS == 32, "uint32_t isn't 32 bits");
-
-        uint32_t a = nonzero_mask(x);
-        return UINT32_BITS - (internal::clz(a) + 1);
+        auto a = nonzero_mask(x);
+        return (sizeof(a) * 8) - (internal::clz(a) + 1);
     }
 
     /*
@@ -453,7 +448,7 @@ public:
      * warpSize, the answer is wrong.
      */
     __device__ static int two_valuation(fixnum x) {
-        uint32_t a = nonzero_mask(x);
+        auto a = nonzero_mask(x);
         int b = internal::ctz(a), c = 0;
         if (b < SLOT_WIDTH) {
             digit y = layout::shfl(x, b);
@@ -571,15 +566,14 @@ private:
     static digit
     effective_carries(digit &cy_hi, int propagate, int cy) {
         int L = layout::laneIdx();
-        uint32_t allcarries, p, g;
 
-        g = layout::ballot(cy);              // carry generate
-        p = layout::ballot(propagate);       // carry propagate
-        allcarries = (p | g) + g;                 // propagate all carries
+        auto g = layout::ballot(cy);              // carry generate
+        auto p = layout::ballot(propagate);       // carry propagate
+        auto allcarries = (p | g) + g;            // propagate all carries
         // NB: There is no way to unify these two expressions to remove the
         // conditional. The conditional should be optimised away though, since
         // WIDTH is a compile-time constant.
-        cy_hi = (layout::WIDTH == WARPSIZE) // detect hi overflow
+        cy_hi = (layout::WIDTH == CUB_PTX_WARP_THREADS) // detect hi overflow
             ? (allcarries < g)
             : ((allcarries >> layout::WIDTH) & 1);
         allcarries = (allcarries ^ p) | (g << 1); // get effective carries
