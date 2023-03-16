@@ -1,9 +1,9 @@
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
 #include <cassert>
 #include <type_traits>
+#include <cub/cub.cuh>
 
 namespace cuFIXNUM {
 
@@ -193,41 +193,25 @@ namespace internal {
     __device__ __forceinline__
     void
     min(u32 &m, u32 a, u32 b) {
-#ifdef __ILUVATAR__
-        m = std::min(a, b);
-#else
-        m = ::min(a, b);
-#endif
+        m = CUB_MIN(a, b);
     }
 
     __device__ __forceinline__
     void
     min(u64 &m, u64 a, u64 b) {
-#ifdef __ILUVATAR__
-        m = std::min(a, b);
-#else
-        m = ::min(a, b);
-#endif
+        m = CUB_MIN(a, b);
     }
 
     __device__ __forceinline__
     void
     max(u32 &m, u32 a, u32 b) {
-#ifdef __ILUVATAR__
-        m = std::max(a, b);
-#else
-        m = ::max(a, b);
-#endif
+        m = CUB_MAX(a, b);
     }
 
     __device__ __forceinline__
     void
     max(u64 &m, u64 a, u64 b) {
-#ifdef __ILUVATAR__
-        m = std::max(a, b);
-#else
-        m = ::max(a, b);
-#endif
+        m = CUB_MAX(a, b);
     }
 
     __device__ __forceinline__

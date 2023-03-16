@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cub/cub.cuh>
 #include "slot_layout.cu"
 #include "word_fixnum.cu"
 
@@ -70,11 +71,7 @@ public:
      * in.
      */
     __host__ __device__ static int from_bytes(uint8_t *r, const uint8_t *bytes, int nbytes) {
-#ifdef __ILUVATAR__
-        int n = std::min(nbytes, BYTES);
-#else
-        int n = min(nbytes, BYTES);
-#endif
+        int n = CUB_MIN(nbytes, BYTES);
         memcpy(r, bytes, n);
         memset(r + n, 0, BYTES - n);
         return n;
@@ -90,11 +87,7 @@ public:
      * in.
      */
     __host__ __device__ static int to_bytes(uint8_t *bytes, int nbytes, const uint8_t *r) {
-#ifdef __ILUVATAR__
-        int n = std::min(nbytes, BYTES);
-#else
-        int n = min(nbytes, BYTES);
-#endif
+        int n = CUB_MIN(nbytes, BYTES);
         memcpy(bytes, r, n);
         return n;
     }
