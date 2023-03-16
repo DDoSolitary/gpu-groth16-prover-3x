@@ -324,7 +324,8 @@ fixnum_array<fixnum>::map(Args... args) {
 
     // nblocks > 0 iff nelts > 0
     if (nblocks > 0) {
-        (int[]){0, (args->fetch_to_dev(), args->mem_loc = MEM_DEV, 0)...};
+        int a[]{0, (args->fetch_to_dev(), args->mem_loc = MEM_DEV, 0)...};
+        (void)a;
 
         cudaStream_t stream;
         cuda_check(cudaStreamCreate(&stream), "create stream");
