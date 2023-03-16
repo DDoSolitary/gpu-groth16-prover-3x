@@ -39,7 +39,7 @@ struct slot_layout
 
     static constexpr int WIDTH = width;
 
-#ifdef ILUVATAR
+#ifdef __ILUVATAR__
     typedef uint64_t Mask;
 #else
     typedef uint32_t Mask;

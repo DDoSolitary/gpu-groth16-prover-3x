@@ -11,54 +11,6 @@ namespace internal {
     typedef std::uint32_t u32;
     typedef std::uint64_t u64;
 
-    __device__ __forceinline__
-    void
-    addc(u32 &s, u32 a, u32 b) {
-        asm ("addc.u32 %0, %1, %2;"
-             : "=r"(s)
-             : "r"(a), "r" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    add_cc(u32 &s, u32 a, u32 b) {
-        asm ("add.cc.u32 %0, %1, %2;"
-             : "=r"(s)
-             : "r"(a), "r" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    addc_cc(u32 &s, u32 a, u32 b) {
-        asm ("addc.cc.u32 %0, %1, %2;"
-             : "=r"(s)
-             : "r"(a), "r" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    addc(u64 &s, u64 a, u64 b) {
-        asm ("addc.u64 %0, %1, %2;"
-             : "=l"(s)
-             : "l"(a), "l" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    add_cc(u64 &s, u64 a, u64 b) {
-        asm ("add.cc.u64 %0, %1, %2;"
-             : "=l"(s)
-             : "l"(a), "l" (b));
-    }
-
-    __device__ __forceinline__
-    void
-    addc_cc(u64 &s, u64 a, u64 b) {
-        asm ("addc.cc.u64 %0, %1, %2;"
-             : "=l"(s)
-             : "l"(a), "l" (b));
-    }
-
     /*
      * hi * 2^n + lo = a * b
      */
@@ -132,40 +84,6 @@ namespace internal {
         lo = a * b + c;
     }
 
-
-    // as above but with carry in cy
-    __device__ __forceinline__
-    void
-    mad_lo_cc(u32 &lo, u32 a, u32 b, u32 c) {
-        asm ("mad.lo.cc.u32 %0, %1, %2, %3;"
-             : "=r"(lo)
-             : "r"(a), "r" (b), "r"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    mad_lo_cc(u64 &lo, u64 a, u64 b, u64 c) {
-        asm ("mad.lo.cc.u64 %0, %1, %2, %3;"
-             : "=l"(lo)
-             : "l"(a), "l" (b), "l"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    madc_lo_cc(u32 &lo, u32 a, u32 b, u32 c) {
-        asm ("madc.lo.cc.u32 %0, %1, %2, %3;"
-             : "=r"(lo)
-             : "r"(a), "r" (b), "r"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    madc_lo_cc(u64 &lo, u64 a, u64 b, u64 c) {
-        asm ("madc.lo.cc.u64 %0, %1, %2, %3;"
-             : "=l"(lo)
-             : "l"(a), "l" (b), "l"(c));
-    }
-
     __device__ __forceinline__
     void
     mad_hi(u32 &hi, u32 a, u32 b, u32 c) {
@@ -176,38 +94,6 @@ namespace internal {
     void
     mad_hi(u64 &hi, u64 a, u64 b, u64 c) {
         hi = __umul64hi(a, b) + c;
-    }
-
-    __device__ __forceinline__
-    void
-    mad_hi_cc(u32 &hi, u32 a, u32 b, u32 c) {
-        asm ("mad.hi.cc.u32 %0, %1, %2, %3;"
-             : "=r"(hi)
-             : "r"(a), "r" (b), "r"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    mad_hi_cc(u64 &hi, u64 a, u64 b, u64 c) {
-        asm ("mad.hi.cc.u64 %0, %1, %2, %3;"
-             : "=l"(hi)
-             : "l"(a), "l" (b), "l"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    madc_hi_cc(u32 &hi, u32 a, u32 b, u32 c) {
-        asm ("madc.hi.cc.u32 %0, %1, %2, %3;"
-             : "=r"(hi)
-             : "r"(a), "r" (b), "r"(c));
-    }
-
-    __device__ __forceinline__
-    void
-    madc_hi_cc(u64 &hi, u64 a, u64 b, u64 c) {
-        asm ("madc.hi.cc.u64 %0, %1, %2, %3;\n\t"
-             : "=l"(hi)
-             : "l"(a), "l" (b), "l"(c));
     }
 
     // Source: https://docs.nvidia.com/cuda/parallel-thread-execution/#logic-and-shift-instructions-shf

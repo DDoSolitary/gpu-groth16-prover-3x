@@ -70,7 +70,11 @@ public:
      * in.
      */
     __host__ __device__ static int from_bytes(uint8_t *r, const uint8_t *bytes, int nbytes) {
+#ifdef __ILUVATAR__
+        int n = std::min(nbytes, BYTES);
+#else
         int n = min(nbytes, BYTES);
+#endif
         memcpy(r, bytes, n);
         memset(r + n, 0, BYTES - n);
         return n;
@@ -86,7 +90,11 @@ public:
      * in.
      */
     __host__ __device__ static int to_bytes(uint8_t *bytes, int nbytes, const uint8_t *r) {
+#ifdef __ILUVATAR__
+        int n = std::min(nbytes, BYTES);
+#else
         int n = min(nbytes, BYTES);
+#endif
         memcpy(bytes, r, n);
         return n;
     }
@@ -249,7 +257,7 @@ public:
         fixnum r, s;
         r = fixnum::zero();
         s = fixnum::zero();
-        digit cy = digit::zero();
+        digit cy = digit::zero(), cy2 = digit::zero();
 
         fixnum ai = get(a, 0);
         digit::mul_lo(s, ai, b);
@@ -259,7 +267,7 @@ public:
 
         for (int i = 1; i < layout::WIDTH; ++i) {
             fixnum ai = get(a, i);
-            digit::mad_lo_cc(s, ai, b, s);
+            digit::mad_lo_cy(s, cy2, ai, b, s);
 
             fixnum s0 = get(s, 0);
             r = (L == i) ? s0 : r; // r[i] = s[0]
@@ -267,8 +275,7 @@ public:
 
             // TODO: Investigate whether deferring this carry resolution until
             // after the loop improves performance much.
-            digit::addc_cc(s, s, cy);  // add carry from prev digit
-            digit::addc(cy, 0, 0);     // cy = CC.CF
+            digit::add_cyio(s, cy, s, cy2);  // add carry from prev digit
             digit::mad_hi_cy(s, cy, ai, b, s);
         }
         cy = layout::shfl_up0(cy, 1);
