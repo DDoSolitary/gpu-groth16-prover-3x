@@ -47,7 +47,7 @@ ec_multiexp_straus(var *out, const var *multiples_, const var *scalars_, size_t 
         EC x;
         EC::set_zero(x);
         while (i >= C) {
-            EC::mul_2exp<C>(x, x);
+            EC::template mul_2exp<C>(x, x);
             i -= C;
 
             int q = i / digit::BITS, r = i % digit::BITS;
