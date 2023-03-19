@@ -2,7 +2,8 @@
 #include <vector>
 #include <chrono>
 #include <memory>
-#include <cooperative_groups.h>
+#include <algorithm>
+#include <cstdint>
 
 #include "curves.cu"
 
@@ -210,7 +211,26 @@ allocate_memory(size_t nbytes, int dbg = 0) {
 
 std::unique_ptr<var[]>
 allocate_host_memory(size_t nbytes) {
-	return std::make_unique<var[]>((nbytes + sizeof(var) - 1) / sizeof(var));
+    auto ret = std::make_unique<var[]>((nbytes + sizeof(var) - 1) / sizeof(var));
+    memset(ret.get(), 0, nbytes);
+    return ret;
+}
+
+var_ptr read_file_chunked(FILE *f, size_t n) {
+    auto dev_buf = allocate_memory(n);
+    auto dev_ptr = (char *)dev_buf.get();
+    auto bufsz = std::min(n, (size_t)INT32_MAX); // Iluvatar's cudaMemcpy fails when size is above this
+    auto host_buf = allocate_host_memory(bufsz);
+    auto host_ptr = (char *)host_buf.get();
+    for (size_t off = 0; off < n; off += bufsz) {
+        auto sz = std::min(n, off + bufsz) - off;
+        if (fread(host_ptr, sz, 1, f) < 1) {
+            fprintf(stderr, "Failed to read input\n");
+            abort();
+        }
+        cudaMemcpy(dev_ptr + off, host_ptr, sz, cudaMemcpyHostToDevice);
+    }
+    return dev_buf;
 }
 
 var_ptr
@@ -219,46 +239,7 @@ load_scalars(size_t n, FILE *inputs)
     static constexpr size_t scalar_bytes = ELT_BYTES;
     size_t total_bytes = n * scalar_bytes;
 
-    auto mem = allocate_memory(total_bytes);
-    auto mem_h = allocate_host_memory(total_bytes);
-    if (fread((void *)mem_h.get(), total_bytes, 1, inputs) < 1) {
-        fprintf(stderr, "Failed to read scalars\n");
-        abort();
-    }
-    cudaMemcpy(mem.get(), mem_h.get(), total_bytes, cudaMemcpyHostToDevice);
-    return mem;
-}
-
-template< typename EC >
-var_ptr
-load_points(size_t n, FILE *inputs)
-{
-    typedef typename EC::field_type FF;
-
-    static constexpr size_t coord_bytes = FF::DEGREE * ELT_BYTES;
-    static constexpr size_t aff_pt_bytes = 2 * coord_bytes;
-    static constexpr size_t jac_pt_bytes = 3 * coord_bytes;
-
-    size_t total_aff_bytes = n * aff_pt_bytes;
-    size_t total_jac_bytes = n * jac_pt_bytes;
-
-    auto mem = allocate_memory(total_jac_bytes);
-    auto mem_h = allocate_host_memory(total_jac_bytes);
-    if (fread((void *)mem_h.get(), total_aff_bytes, 1, inputs) < 1) {
-        fprintf(stderr, "Failed to read all curve poinst\n");
-        abort();
-    }
-
-    // insert space for z-coordinates
-    char *cmem = reinterpret_cast<char *>(mem_h.get()); //lazy
-    for (size_t i = n - 1; i > 0; --i) {
-        char tmp_pt[aff_pt_bytes];
-        memcpy(tmp_pt, cmem + i * aff_pt_bytes, aff_pt_bytes);
-        memcpy(cmem + i * jac_pt_bytes, tmp_pt, aff_pt_bytes);
-    }
-
-    cudaMemcpy(mem.get(), mem_h.get(), total_jac_bytes, cudaMemcpyHostToDevice);
-    return mem;
+    return read_file_chunked(inputs, total_bytes);
 }
 
 template< typename EC >
@@ -272,12 +253,5 @@ load_points_affine(size_t n, FILE *inputs)
 
     size_t total_aff_bytes = n * aff_pt_bytes;
 
-    auto mem = allocate_memory(total_aff_bytes);
-    auto mem_h = allocate_host_memory(total_aff_bytes);
-    if (fread((void *)mem_h.get(), total_aff_bytes, 1, inputs) < 1) {
-        fprintf(stderr, "Failed to read all curve poinst\n");
-        abort();
-    }
-    cudaMemcpy(mem.get(), mem_h.get(), total_aff_bytes, cudaMemcpyHostToDevice);
-    return mem;
+    return read_file_chunked(inputs, total_aff_bytes);
 }
