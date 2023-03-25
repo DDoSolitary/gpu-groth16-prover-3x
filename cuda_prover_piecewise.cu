@@ -1,5 +1,6 @@
 #include <string>
 #include <chrono>
+#include <thread>
 
 #define NDEBUG 1
 
@@ -168,20 +169,26 @@ void run_prover(
     ec_reduce_straus<ECp, C, R>(sB1, out_B1.get(), B1_mults.get(), w, m + 1);
     ec_reduce_straus<ECpe, C, 2*R>(sB2, out_B2.get(), B2_mults.get(), w, m + 1);
     ec_reduce_straus<ECp, C, R>(sL, out_L.get(), L_mults.get(), w + (primary_input_size + 1) * ELT_LIMBS, m - 1);
-    print_time(t, "gpu launch");
+    print_time(t_gpu, "gpu launch");
 
-    G1 *evaluation_At = B::multiexp_G1(B::input_w(inputs), B::params_A(params), m + 1);
+    G1 *evaluation_At;
     //G1 *evaluation_Bt1 = B::multiexp_G1(B::input_w(inputs), B::params_B1(params), m + 1);
     //G2 *evaluation_Bt2 = B::multiexp_G2(B::input_w(inputs), B::params_B2(params), m + 1);
 
     // Do calculations relating to H on CPU after having set the GPU in
     // motion
-    auto H = B::params_H(params);
-    auto coefficients_for_H =
-        compute_H<B>(d, B::input_ca(inputs), B::input_cb(inputs), B::input_cc(inputs));
-    G1 *evaluation_Ht = B::multiexp_G1(coefficients_for_H, H, d);
-
-    print_time(t, "cpu 1");
+    typename B::vector_G1 *H;
+    typename B::vector_Fr *coefficients_for_H;
+    G1 *evaluation_Ht;
+    std::thread cpu1_thread([&]() {
+        auto t_cpu1 = now();
+        evaluation_At = B::multiexp_G1(B::input_w(inputs), B::params_A(params), m + 1);
+        H = B::params_H(params);
+        coefficients_for_H =
+            compute_H<B>(d, B::input_ca(inputs), B::input_cb(inputs), B::input_cc(inputs));
+        evaluation_Ht = B::multiexp_G1(coefficients_for_H, H, d);
+        print_time(t_cpu1, "cpu 1");
+    });
 
     //cudaStreamSynchronize(sA);
     //G1 *evaluation_At = B::read_pt_ECp(out_A.get());
@@ -198,7 +205,10 @@ void run_prover(
     cudaStreamSynchronize(sL);
     G1 *evaluation_Lt = B::read_pt_ECp(out_L_h.get());
 
-    print_time(t_gpu, "gpu e2e");
+    print_time(t, "gpu e2e");
+
+    cpu1_thread.join();
+    print_time(t, "cpu 1 wait");
 
     auto scaled_Bt1 = B::G1_scale(B::input_r(inputs), evaluation_Bt1);
     auto Lt1_plus_scaled_Bt1 = B::G1_add(evaluation_Lt, scaled_Bt1);

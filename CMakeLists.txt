@@ -264,4 +264,5 @@ add_executable (
 
     cuda_prover_piecewise.cu
 )
-target_link_libraries(cuda_prover_piecewise cuda_main prover_reference_functions)
+find_package(Threads)
+target_link_libraries(cuda_prover_piecewise cuda_main prover_reference_functions Threads::Threads)
