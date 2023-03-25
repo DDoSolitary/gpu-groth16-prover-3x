@@ -209,11 +209,19 @@ allocate_memory(size_t nbytes, int dbg = 0) {
     return var_ptr(mem);
 }
 
-std::unique_ptr<var[]>
+struct CudaFreeHost {
+    void operator()(var *mem) { cudaFreeHost(mem); }
+};
+
+std::unique_ptr<var, CudaFreeHost>
 allocate_host_memory(size_t nbytes) {
-    auto ret = std::make_unique<var[]>((nbytes + sizeof(var) - 1) / sizeof(var));
-    memset(ret.get(), 0, nbytes);
-    return ret;
+    var *mem = nullptr;
+    cudaHostAlloc(&mem, nbytes, cudaHostAllocDefault);
+    if (mem == nullptr) {
+        fprintf(stderr, "Failed to allocate enough host memory\n");
+        abort();
+    }
+    return std::unique_ptr<var, CudaFreeHost>(mem);
 }
 
 var_ptr read_file_chunked(FILE *f, size_t n) {
