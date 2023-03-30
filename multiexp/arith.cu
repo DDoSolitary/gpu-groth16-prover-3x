@@ -3,77 +3,67 @@
 #include "fixnum.cu"
 
 __device__ __constant__
-const var MOD_Q[BIG_WIDTH] = {
-    0x5e9063de245e8001ULL, 0xe39d54522cdd119fULL,
-    0x638810719ac425f0ULL, 0x685acce9767254a4ULL,
-    0xb80f0da5cb537e38ULL, 0xb117e776f218059dULL,
-    0x99d124d9a15af79dULL, 0x7fdb925e8a0ed8dULL,
-    0x5eb7e8f96c97d873ULL, 0xb7f997505b8fafedULL,
-    0x10229022eee2cdadULL, 0x1c4c62d92c411ULL
-
-    , 0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL // just to make an even 16
+const uint32_t MOD_Q[ELT_LIMBS32] = {
+    0x245e8001, 0x5e9063de, 0x2cdd119f, 0xe39d5452,
+    0x9ac425f0, 0x63881071, 0x767254a4, 0x685acce9,
+    0xcb537e38, 0xb80f0da5, 0xf218059d, 0xb117e776,
+    0xa15af79d, 0x99d124d9, 0xe8a0ed8d, 0x07fdb925,
+    0x6c97d873, 0x5eb7e8f9, 0x5b8fafed, 0xb7f99750,
+    0xeee2cdad, 0x10229022, 0x2d92c411, 0x0001c4c6
 };
 
-// -Q^{-1} (mod 2^64)
-static constexpr var Q_NINV_MOD = 0xf2044cfbe45e7fffULL;
+// -Q^{-1} (mod 2^32)
+static constexpr uint32_t Q_NINV_MOD = 0xe45e7fff;
 
 // 2^768 mod Q
 __device__ __constant__
-const var X_MOD_Q[BIG_WIDTH] = {
-    0x98a8ecabd9dc6f42ULL, 0x91cd31c65a034686ULL,
-    0x97c3e4a0cd14572eULL, 0x79589819c788b601ULL,
-    0xed269c942108976fULL, 0x1e0f4d8acf031d68ULL,
-    0x320c3bb713338559ULL, 0x598b4302d2f00a62ULL,
-    0x4074c9cbfd8ca621ULL, 0xfa47edb3865e88cULL,
-    0x95455fb31ff9a195ULL, 0x7b479ec8e242ULL
-
-    , 0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL // just to make an even 16
+const uint32_t X_MOD_Q[ELT_LIMBS32] = {
+    0xd9dc6f42, 0x98a8ecab, 0x5a034686, 0x91cd31c6,
+    0xcd14572e, 0x97c3e4a0, 0xc788b601, 0x79589819,
+    0x2108976f, 0xed269c94, 0xcf031d68, 0x1e0f4d8a,
+    0x13338559, 0x320c3bb7, 0xd2f00a62, 0x598b4302,
+    0xfd8ca621, 0x4074c9cb, 0x3865e88c, 0x0fa47edb,
+    0x1ff9a195, 0x95455fb3, 0x9ec8e242, 0x00007b47
 };
 
 
 //template< const var *mod_, const var ninv_mod_, const var *binpow_mod_ >
 //struct modulus_info {
 struct MNT4_MOD {
-    __device__ __forceinline__ static int lane() { return fixnum::thread_rank(); }
-    __device__ __forceinline__ static var mod() { return MOD_Q[lane()]; }
-    static constexpr var ninv_mod = Q_NINV_MOD;
-    __device__ __forceinline__ static var monty_one() { return X_MOD_Q[lane()]; }
+    __device__ __forceinline__ static constexpr const uint32_t *mod() { return MOD_Q; }
+    static constexpr uint32_t ninv_mod = Q_NINV_MOD;
+    __device__ __forceinline__ static constexpr const uint32_t *monty_one() { return X_MOD_Q; }
 };
 //typedef modulus_info<MOD_Q, Q_NINV_MOD, X_MOD_Q> MNT4_MOD;
 
 __device__ __constant__
-const var MOD_R[BIG_WIDTH] = {
-    0xd90776e240000001ULL, 0x4ea099170fa13a4fULL,
-    0xd6c381bc3f005797ULL, 0xb9dff97634993aa4ULL,
-    0x3eebca9429212636ULL, 0xb26c5c28c859a99bULL,
-    0x99d124d9a15af79dULL, 0x7fdb925e8a0ed8dULL,
-    0x5eb7e8f96c97d873ULL, 0xb7f997505b8fafedULL,
-    0x10229022eee2cdadULL, 0x1c4c62d92c411ULL
-
-    , 0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL // just to make an even 16
+const uint32_t MOD_R[ELT_LIMBS32] = {
+    0x40000001, 0xd90776e2, 0x0fa13a4f, 0x4ea09917,
+    0x3f005797, 0xd6c381bc, 0x34993aa4, 0xb9dff976,
+    0x29212636, 0x3eebca94, 0xc859a99b, 0xb26c5c28,
+    0xa15af79d, 0x99d124d9, 0xe8a0ed8d, 0x07fdb925,
+    0x6c97d873, 0x5eb7e8f9, 0x5b8fafed, 0xb7f99750,
+    0xeee2cdad, 0x10229022, 0x2d92c411, 0x0001c4c6
 };
 
-// -R^{-1} (mod 2^64)
-const var R_NINV_MOD = 0xc90776e23fffffffULL;
+// -R^{-1} (mod 2^32)
+const uint32_t R_NINV_MOD = 0x3fffffff;
 
 // 2^768 mod R
 __device__ __constant__
-const var X_MOD_R[BIG_WIDTH] = {
-    0xb99680147fff6f42ULL, 0x4eb16817b589cea8ULL,
-    0xa1ebd2d90c79e179ULL, 0xf725caec549c0daULL,
-    0xab0c4ee6d3e6dad4ULL, 0x9fbca908de0ccb62ULL,
-    0x320c3bb713338498ULL, 0x598b4302d2f00a62ULL,
-    0x4074c9cbfd8ca621ULL, 0xfa47edb3865e88cULL,
-    0x95455fb31ff9a195ULL, 0x7b479ec8e242ULL
-
-    , 0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL // just to make an even 16
+const uint32_t X_MOD_R[ELT_LIMBS32] = {
+    0x7fff6f42, 0xb9968014, 0xb589cea8, 0x4eb16817,
+    0x0c79e179, 0xa1ebd2d9, 0xc549c0da, 0x0f725cae,
+    0xd3e6dad4, 0xab0c4ee6, 0xde0ccb62, 0x9fbca908,
+    0x13338498, 0x320c3bb7, 0xd2f00a62, 0x598b4302,
+    0xfd8ca621, 0x4074c9cb, 0x3865e88c, 0x0fa47edb,
+    0x1ff9a195, 0x95455fb3, 0x9ec8e242, 0x00007b47
 };
 
 struct MNT6_MOD {
-    __device__ __forceinline__ static int lane() { return fixnum::thread_rank(); }
-    __device__ __forceinline__ static var mod() { return MOD_R[lane()]; }
-    static constexpr var ninv_mod = R_NINV_MOD;
-    __device__ __forceinline__ static var monty_one() { return X_MOD_R[lane()]; }
+    __device__ __forceinline__ static constexpr const uint32_t *mod() { return MOD_R; }
+    static constexpr uint32_t ninv_mod = R_NINV_MOD;
+    __device__ __forceinline__ static constexpr const uint32_t *monty_one() { return X_MOD_R; }
 };
 
 // Apparently we still can't do partial specialisation of function
@@ -220,32 +210,36 @@ template< typename modulus_info >
 struct Fp {
     typedef Fp PrimeField;
 
-    var a;
+    uint32_t a[ELT_LIMBS32];
 
     static constexpr int DEGREE = 1;
 
     __device__
     static void
-    load(Fp &x, const var *mem) {
-        int t = fixnum::thread_rank();
-        x.a = (t < ELT_LIMBS) ? mem[t] : 0UL;
+    load(Fp &x, const uint32_t *mem) {
+        memcpy(x.a, mem, ELT_BYTES);
     }
 
     __device__
     static void
-    store(var *mem, const Fp &x) {
-        int t = fixnum::thread_rank();
-        if (t < ELT_LIMBS)
-            mem[t] = x.a;
+    store(uint32_t *mem, const Fp &x) {
+        memcpy(mem, x.a, ELT_BYTES);
     }
 
     __device__
     static int
-    are_equal(const Fp &x, const Fp &y) { return fixnum::cmp(x.a, y.a) == 0; }
+    are_equal(const Fp &x, const Fp &y) {
+        for (int i = 0; i < ELT_LIMBS32; i++) {
+            if (x.a[i] != y.a[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     __device__
     static void
-    set_zero(Fp &x) { x.a = fixnum::zero(); }
+    set_zero(Fp &x) { fixnum::set_zero(x.a); }
 
     __device__
     static int
@@ -253,23 +247,25 @@ struct Fp {
 
     __device__
     static void
-    set_one(Fp &x) { x.a = modulus_info::monty_one(); }
+    set_one(Fp &x) { memcpy(x.a, modulus_info::monty_one(), ELT_BYTES); }
 
     __device__
     static void
-    add(Fp &zz, const Fp &xx, const Fp &yy) {
+    add(Fp &z, const Fp &x, const Fp &y) {
         int br;
-        var x = xx.a, y = yy.a, z, r;
-        var mod = modulus_info::mod();
-        fixnum::add(z, x, y);
-        fixnum::sub_br(r, br, z, mod);
-        zz.a = br ? z : r;
+        Fp r;
+        auto mod = modulus_info::mod();
+        fixnum::add(r.a, x.a, y.a);
+        fixnum::sub_br(z.a, br, r.a, mod);
+        if (br) {
+            memcpy(z.a, r.a, ELT_BYTES);
+        }
     }
 
     __device__
     static void
     neg(Fp &z, const Fp &x) {
-        var mod = modulus_info::mod();
+        auto mod = modulus_info::mod();
         fixnum::sub(z.a, mod, x.a);
     }
 
@@ -277,63 +273,47 @@ struct Fp {
     static void
     sub(Fp &z, const Fp &x, const Fp &y) {
         int br;
-        var r, mod = modulus_info::mod();
-        fixnum::sub_br(r, br, x.a, y.a);
-        if (br)
-            fixnum::add(r, r, mod);
-        z.a = r;
+        auto mod = modulus_info::mod();
+        fixnum::sub_br(z.a, br, x.a, y.a);
+        if (br) {
+            fixnum::add(z.a, z.a, mod);
+        }
     }
 
     __device__
     static void
-    mul(Fp &zz, const Fp &xx, const Fp &yy) {
-        auto grp = fixnum::layout();
-        int L = fixnum::thread_rank();
-        var mod = modulus_info::mod();
-
-        var x = xx.a, y = yy.a, z = digit::zero();
-        var tmp;
-        digit::mul_lo(tmp, x, modulus_info::ninv_mod);
-        digit::mul_lo(tmp, tmp, grp.shfl(y, 0));
-        int cy = 0;
-
-        for (int i = 0; i < ELT_LIMBS; ++i) {
-            var u;
-            var xi = grp.shfl(x, i);
-            var z0 = grp.shfl(z, 0);
-            var tmpi = grp.shfl(tmp, i);
-
-            digit::mad_lo(u, z0, modulus_info::ninv_mod, tmpi);
-            digit::mad_lo_cy(z, cy, mod, u, z);
-            digit::mad_lo_cy(z, cy, y, xi, z);
-
-            assert(L || z == 0);  // z[0] must be 0
-            z = grp.shfl_down(z, 1); // Shift right one word
-            z = (L >= ELT_LIMBS - 1) ? 0 : z;
-
-            digit::add_cy(z, cy, z, cy);
-            digit::mad_hi_cy(z, cy, mod, u, z);
-            digit::mad_hi_cy(z, cy, y, xi, z);
+    mul(Fp &z, const Fp &x, const Fp &y) {
+        auto mod = modulus_info::mod();
+        Fp r;
+        fixnum::set_zero(r.a);
+        uint32_t cy_hi = 0;
+        for (int i = 0; i < ELT_LIMBS32; i++) {
+            auto t0 = (uint64_t)x.a[0] * y.a[i] + r.a[0];
+            auto lo = (uint32_t)t0;
+            uint32_t cy = t0 >> 32;
+            for (int j = 1; j < ELT_LIMBS32; j++) {
+                auto t = (uint64_t)x.a[j] * y.a[i] + r.a[j] + cy;
+                r.a[j - 1] = t;
+                cy = t >> 32;
+            }
+            r.a[ELT_LIMBS32 - 1] = cy;
+            auto m = lo * modulus_info::ninv_mod;
+            cy = ((uint64_t)m * mod[0] + lo) >> 32;
+            for (int j = 0; j < ELT_LIMBS32 - 1; j++) {
+                auto t = (uint64_t)m * mod[j + 1] + r.a[j] + cy;
+                r.a[j] = t;
+                cy = t >> 32;
+            }
+            auto t = (uint64_t)r.a[ELT_LIMBS32 - 1] + cy + cy_hi;
+            r.a[ELT_LIMBS32 - 1] = t;
+            cy_hi = t >> 32;
         }
-        // Resolve carries
-        int msb = grp.shfl(cy, ELT_LIMBS - 1);
-        cy = grp.shfl_up(cy, 1); // left shift by 1
-        cy = (L == 0) ? 0 : cy;
-
-        fixnum::add_cy(z, cy, z, cy);
-        msb += cy;
-        assert(msb == !!msb); // msb = 0 or 1.
-
-        // br = 0 ==> z >= mod
-        var r;
+        assert(!cy_hi);
         int br;
-        fixnum::sub_br(r, br, z, mod);
-        if (msb || br == 0) {
-            // If the msb was set, then we must have had to borrow.
-            assert(!msb || msb == br);
-            z = r;
+        fixnum::sub_br(z.a, br, r.a, mod);
+        if (br) {
+            memcpy(z.a, r.a, ELT_BYTES);
         }
-        zz.a = z;
     }
 
     __device__
@@ -344,20 +324,11 @@ struct Fp {
         mul(z, x, x);
     }
 
-#if 0
-    __device__
-    static void
-    inv(Fp &z, const Fp &x) {
-        // FIXME: Implement!  See HEHCC Algorithm 11.12.
-        z = x;
-    }
-#endif
-
     __device__
     static void
     from_monty(Fp &y, const Fp &x) {
         Fp one;
-        one.a = fixnum::one();
+        fixnum::set_one(one.a);
         mul(y, x, one);
     }
 };
@@ -379,16 +350,16 @@ struct Fp2 {
 
     __device__
     static void
-    load(Fp2 &x, const var *mem) {
+    load(Fp2 &x, const uint32_t *mem) {
         Fp::load(x.a0, mem);
-        Fp::load(x.a1, mem + ELT_LIMBS);
+        Fp::load(x.a1, mem + ELT_LIMBS32);
     }
 
     __device__
     static void
-    store(var *mem, const Fp2 &x) {
+    store(uint32_t *mem, const Fp2 &x) {
         Fp::store(mem, x.a0);
-        Fp::store(mem + ELT_LIMBS, x.a1);
+        Fp::store(mem + ELT_LIMBS32, x.a1);
     }
 
     __device__
@@ -474,18 +445,18 @@ struct Fp3 {
 
     __device__
     static void
-    load(Fp3 &x, const var *mem) {
+    load(Fp3 &x, const uint32_t *mem) {
         Fp::load(x.a0, mem);
-        Fp::load(x.a1, mem + ELT_LIMBS);
-        Fp::load(x.a2, mem + 2*ELT_LIMBS);
+        Fp::load(x.a1, mem + ELT_LIMBS32);
+        Fp::load(x.a2, mem + 2*ELT_LIMBS32);
     }
 
     __device__
     static void
-    store(var *mem, const Fp3 &x) {
+    store(uint32_t *mem, const Fp3 &x) {
         Fp::store(mem, x.a0);
-        Fp::store(mem + ELT_LIMBS, x.a1);
-        Fp::store(mem + 2*ELT_LIMBS, x.a2);
+        Fp::store(mem + ELT_LIMBS32, x.a1);
+        Fp::store(mem + 2*ELT_LIMBS32, x.a2);
     }
 
     __device__

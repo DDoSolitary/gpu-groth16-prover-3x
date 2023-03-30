@@ -159,16 +159,17 @@ void run_prover(
     fclose(inputs_file);
     print_time(t, "load inputs");
 
-    const var *w = w_.get();
+    auto *w = w_.get();
 
     auto t_gpu = t;
 
     cudaStream_t sA, sB1, sB2, sL;
 
+    ec_scalar_from_monty<ECp>(w, m + 1);
     //ec_reduce_straus<ECp, C, R>(sA, out_A.get(), A_mults.get(), w, m + 1);
     ec_reduce_straus<ECp, C, R>(sB1, out_B1.get(), B1_mults.get(), w, m + 1);
     ec_reduce_straus<ECpe, C, 2*R>(sB2, out_B2.get(), B2_mults.get(), w, m + 1);
-    ec_reduce_straus<ECp, C, R>(sL, out_L.get(), L_mults.get(), w + (primary_input_size + 1) * ELT_LIMBS, m - 1);
+    ec_reduce_straus<ECp, C, R>(sL, out_L.get(), L_mults.get(), w + (primary_input_size + 1) * ELT_LIMBS32, m - 1);
     print_time(t_gpu, "gpu launch");
 
     G1 *evaluation_At;
@@ -195,15 +196,15 @@ void run_prover(
 
     cudaMemcpyAsync(out_B1_h.get(), out_B1.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sB1);
     cudaStreamSynchronize(sB1);
-    G1 *evaluation_Bt1 = B::read_pt_ECp(out_B1_h.get());
+    G1 *evaluation_Bt1 = B::read_pt_ECp((const var *)out_B1_h.get());
 
     cudaMemcpyAsync(out_B2_h.get(), out_B2.get(), ECpe::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sB2);
     cudaStreamSynchronize(sB2);
-    G2 *evaluation_Bt2 = B::read_pt_ECpe(out_B2_h.get());
+    G2 *evaluation_Bt2 = B::read_pt_ECpe((const var *)out_B2_h.get());
 
     cudaMemcpyAsync(out_L_h.get(), out_L.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sL);
     cudaStreamSynchronize(sL);
-    G1 *evaluation_Lt = B::read_pt_ECp(out_L_h.get());
+    G1 *evaluation_Lt = B::read_pt_ECp((const var *)out_L_h.get());
 
     print_time(t, "gpu e2e");
 

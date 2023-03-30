@@ -4,20 +4,29 @@
 #include <memory>
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 
 #include "curves.cu"
+
+template<typename Fr>
+__global__ void
+ec_scalar_from_monty_kernel(uint32_t *scalars_, size_t N) {
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx >= N) {
+        return;
+    }
+    auto p = ((Fr *)scalars_) + idx;
+    Fr::from_monty(*p, *p);
+}
 
 // C is the size of the precomputation
 // R is the number of points we're handling per thread
 template< typename EC, int C = 4, int RR = 8 >
 __global__ void
-ec_multiexp_straus(var *out, const var *multiples_, const var *scalars_, size_t N)
+ec_multiexp_straus(uint32_t *out, const uint32_t *multiples_, const uint32_t *scalars_, size_t N)
 {
     int T = threadIdx.x, B = blockIdx.x, D = blockDim.x;
-    int elts_per_block = D / BIG_WIDTH;
-    int tileIdx = T / BIG_WIDTH;
-
-    int idx = elts_per_block * B + tileIdx;
+    int idx = D * B + T;
 
     size_t n = (N + RR - 1) / RR;
     if (idx < n) {
@@ -25,43 +34,38 @@ ec_multiexp_straus(var *out, const var *multiples_, const var *scalars_, size_t 
         size_t R = (idx < n - 1) ? RR : (N % RR);
 
         typedef typename EC::group_type Fr;
-        static constexpr int JAC_POINT_LIMBS = 3 * EC::field_type::DEGREE * ELT_LIMBS;
-        static constexpr int AFF_POINT_LIMBS = 2 * EC::field_type::DEGREE * ELT_LIMBS;
+        static constexpr int JAC_POINT_LIMBS = 3 * EC::field_type::DEGREE * ELT_LIMBS32;
+        static constexpr int AFF_POINT_LIMBS = 2 * EC::field_type::DEGREE * ELT_LIMBS32;
         int out_off = idx * JAC_POINT_LIMBS;
         int m_off = idx * RR * AFF_POINT_LIMBS;
-        int s_off = idx * RR * ELT_LIMBS;
+        int s_off = idx * RR * ELT_LIMBS32;
 
-        Fr scalars[RR];
-        for (int j = 0; j < R; ++j) {
-            Fr::load(scalars[j], scalars_ + s_off + j*ELT_LIMBS);
-            Fr::from_monty(scalars[j], scalars[j]);
-        }
+        auto scalars = (const Fr *)(scalars_ + s_off);
 
-        const var *multiples = multiples_ + m_off;
+        const auto *multiples = multiples_ + m_off;
         // TODO: Consider loading multiples and/or scalars into shared memory
 
         // i is smallest multiple of C such that i > 753
         int i = C * ((753 + C - 1) / C); // C * ceiling(753/C)
         assert((i - C * 753) < C);
-        static constexpr var C_MASK = (1U << C) - 1U;
+        static constexpr uint32_t C_MASK = (1U << C) - 1U;
 
-        EC x;
+        EC &x = *(EC *)(out + out_off);
         EC::set_zero(x);
         while (i >= C) {
             EC::template mul_2exp<C>(x, x);
             i -= C;
 
-            int q = i / digit::BITS, r = i % digit::BITS;
+            int q = i / 32, r = i % 32;
             for (int j = 0; j < R; ++j) {
                 //(scalars[j][q] >> r) & C_MASK
-                auto g = fixnum::layout();
-                var s = g.shfl(scalars[j].a, q);
-                var win = (s >> r) & C_MASK;
+                auto s = scalars[j].a[q];
+                auto win = (s >> r) & C_MASK;
                 // Handle case where C doesn't divide digit::BITS
-                int bottom_bits = digit::BITS - r;
+                int bottom_bits = sizeof(s) * 8 - r;
                 // detect when window overlaps digit boundary
                 if (bottom_bits < C) {
-                    s = g.shfl(scalars[j].a, q + 1);
+                    s = scalars[j].a[q + 1];
                     win |= (s << bottom_bits) & C_MASK;
                 }
                 if (win > 0) {
@@ -72,109 +76,52 @@ ec_multiexp_straus(var *out, const var *multiples_, const var *scalars_, size_t 
                 }
             }
         }
-        EC::store_jac(out + out_off, x);
     }
 }
 
 template< typename EC >
 __global__ void
-ec_multiexp(var *X, const var *W, size_t n)
+ec_sum_all(uint32_t *X, const uint32_t *Y, size_t n)
 {
     int T = threadIdx.x, B = blockIdx.x, D = blockDim.x;
-    int elts_per_block = D / BIG_WIDTH;
-    int tileIdx = T / BIG_WIDTH;
-
-    int idx = elts_per_block * B + tileIdx;
+    int idx = D * B + T;
 
     if (idx < n) {
-        typedef typename EC::group_type Fr;
-        EC x;
-        Fr w;
-        int x_off = idx * EC::NELTS * ELT_LIMBS;
-        int w_off = idx * ELT_LIMBS;
-
-        EC::load_affine(x, X + x_off);
-        Fr::load(w, W + w_off);
-
-        // We're given W in Monty form for some reason, so undo that.
-        Fr::from_monty(w, w);
-        EC::mul(x, w.a, x);
-
-        EC::store_jac(X + x_off, x);
+        int off = idx * EC::NELTS * ELT_LIMBS32;
+        EC *x = (EC *)(X + off);
+        const EC *y = (const EC *)(Y + off);
+        EC::add(*x, *x, *y);
     }
 }
 
-template< typename EC >
-__global__ void
-ec_sum_all(var *X, const var *Y, size_t n)
-{
-    int T = threadIdx.x, B = blockIdx.x, D = blockDim.x;
-    int elts_per_block = D / BIG_WIDTH;
-    int tileIdx = T / BIG_WIDTH;
+static constexpr size_t threads_per_block = 128;
 
-    int idx = elts_per_block * B + tileIdx;
-
-    if (idx < n) {
-        EC z, x, y;
-        int off = idx * EC::NELTS * ELT_LIMBS;
-
-        EC::load_jac(x, X + off);
-        EC::load_jac(y, Y + off);
-
-        EC::add(z, x, y);
-
-        EC::store_jac(X + off, z);
-    }
+template<typename EC>
+void
+ec_scalar_from_monty(uint32_t *scalars, size_t N) {
+    ec_scalar_from_monty_kernel<typename EC::group_type><<<(N + threads_per_block -1) / threads_per_block, threads_per_block>>>(scalars, N);
 }
-
-static constexpr size_t threads_per_block = 256;
 
 template< typename EC, int C, int R >
 void
-ec_reduce_straus(cudaStream_t &strm, var *out, const var *multiples, const var *scalars, size_t N)
+ec_reduce_straus(cudaStream_t &strm, uint32_t *out, const uint32_t *multiples, const uint32_t *scalars, size_t N)
 {
     cudaStreamCreate(&strm);
 
-    static constexpr size_t pt_limbs = EC::NELTS * ELT_LIMBS;
+    static constexpr size_t pt_limbs = EC::NELTS * ELT_LIMBS32;
     size_t n = (N + R - 1) / R;
 
-    size_t nblocks = (n * BIG_WIDTH + threads_per_block - 1) / threads_per_block;
+    size_t nblocks = (n + threads_per_block - 1) / threads_per_block;
 
     ec_multiexp_straus<EC, C, R><<< nblocks, threads_per_block, 0, strm>>>(out, multiples, scalars, N);
 
     size_t r = n & 1, m = n / 2;
     for ( ; m != 0; r = m & 1, m >>= 1) {
-        nblocks = (m * BIG_WIDTH + threads_per_block - 1) / threads_per_block;
+        nblocks = (m + threads_per_block - 1) / threads_per_block;
 
         ec_sum_all<EC><<<nblocks, threads_per_block, 0, strm>>>(out, out + m*pt_limbs, m);
         if (r)
             ec_sum_all<EC><<<1, threads_per_block, 0, strm>>>(out, out + 2*m*pt_limbs, 1);
-    }
-}
-
-template< typename EC >
-void
-ec_reduce(cudaStream_t &strm, var *X, const var *w, size_t n)
-{
-    cudaStreamCreate(&strm);
-
-    size_t nblocks = (n * BIG_WIDTH + threads_per_block - 1) / threads_per_block;
-
-    // FIXME: Only works on Pascal and later.
-    //auto grid = cg::this_grid();
-    ec_multiexp<EC><<< nblocks, threads_per_block, 0, strm>>>(X, w, n);
-
-    static constexpr size_t pt_limbs = EC::NELTS * ELT_LIMBS;
-
-    size_t r = n & 1, m = n / 2;
-    for ( ; m != 0; r = m & 1, m >>= 1) {
-        nblocks = (m * BIG_WIDTH + threads_per_block - 1) / threads_per_block;
-
-        ec_sum_all<EC><<<nblocks, threads_per_block, 0, strm>>>(X, X + m*pt_limbs, m);
-        if (r)
-            ec_sum_all<EC><<<1, threads_per_block, 0, strm>>>(X, X + 2*m*pt_limbs, 1);
-        // TODO: Not sure this is really necessary.
-        //grid.sync();
     }
 }
 
@@ -192,13 +139,13 @@ void print_meminfo(size_t allocated) {
 }
 
 struct CudaFree {
-    void operator()(var *mem) { cudaFree(mem); }
+    void operator()(uint32_t *mem) { cudaFree(mem); }
 };
-typedef std::unique_ptr<var, CudaFree> var_ptr;
+typedef std::unique_ptr<uint32_t, CudaFree> var_ptr;
 
 var_ptr
 allocate_memory(size_t nbytes, int dbg = 0) {
-    var *mem = nullptr;
+    uint32_t *mem = nullptr;
     cudaMalloc(&mem, nbytes);
     if (mem == nullptr) {
         fprintf(stderr, "Failed to allocate enough device memory\n");
@@ -210,18 +157,18 @@ allocate_memory(size_t nbytes, int dbg = 0) {
 }
 
 struct CudaFreeHost {
-    void operator()(var *mem) { cudaFreeHost(mem); }
+    void operator()(uint32_t *mem) { cudaFreeHost(mem); }
 };
 
-std::unique_ptr<var, CudaFreeHost>
+std::unique_ptr<uint32_t, CudaFreeHost>
 allocate_host_memory(size_t nbytes) {
-    var *mem = nullptr;
+    uint32_t *mem = nullptr;
     cudaHostAlloc(&mem, nbytes, cudaHostAllocDefault);
     if (mem == nullptr) {
         fprintf(stderr, "Failed to allocate enough host memory\n");
         abort();
     }
-    return std::unique_ptr<var, CudaFreeHost>(mem);
+    return std::unique_ptr<uint32_t, CudaFreeHost>(mem);
 }
 
 var_ptr read_file_chunked(FILE *f, size_t n) {

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.18)
 
 enable_language(CUDA)
 if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
-  set(CMAKE_CUDA_ARCHITECTURES 60)
+  set(CMAKE_CUDA_ARCHITECTURES native)
 endif()
 
 project (libsnark)
@@ -265,4 +265,4 @@ add_executable (
     cuda_prover_piecewise.cu
 )
 find_package(Threads)
-target_link_libraries(cuda_prover_piecewise cuda_main prover_reference_functions Threads::Threads)
+target_link_libraries(cuda_prover_piecewise prover_reference_functions Threads::Threads)
