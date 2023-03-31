@@ -159,9 +159,11 @@ void run_prover(
     fclose(inputs_file);
     print_time(t, "load inputs");
 
-    const var *w = w_.get();
+    var *w = w_.get();
 
     auto t_gpu = t;
+
+    ec_scalar_from_monty<ECp>(w, m + 1);
 
     cudaStream_t sA, sB1, sB2, sL;
 

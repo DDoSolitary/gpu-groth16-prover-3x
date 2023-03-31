@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.18)
 
 enable_language(CUDA)
 if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
-  set(CMAKE_CUDA_ARCHITECTURES 60)
+  set(CMAKE_CUDA_ARCHITECTURES native)
 endif()
 
 project (libsnark)

@@ -7,6 +7,24 @@
 
 #include "curves.cu"
 
+template<typename Fr>
+__global__ void
+ec_scalar_from_monty_kernel(var *scalars_, size_t N) {
+    int T = threadIdx.x, B = blockIdx.x, D = blockDim.x;
+    int elts_per_block = D / BIG_WIDTH;
+    int tileIdx = T / BIG_WIDTH;
+
+    int idx = elts_per_block * B + tileIdx;
+    if (idx >= N) {
+        return;
+    }
+    var *p = scalars_ + idx * ELT_LIMBS;
+    Fr x;
+    Fr::load(x, p);
+    Fr::from_monty(x, x);
+    Fr::store(p, x);
+}
+
 // C is the size of the precomputation
 // R is the number of points we're handling per thread
 template< typename EC, int C = 4, int RR = 8 >
@@ -31,12 +49,6 @@ ec_multiexp_straus(var *out, const var *multiples_, const var *scalars_, size_t 
         int m_off = idx * RR * AFF_POINT_LIMBS;
         int s_off = idx * RR * ELT_LIMBS;
 
-        Fr scalars[RR];
-        for (int j = 0; j < R; ++j) {
-            Fr::load(scalars[j], scalars_ + s_off + j*ELT_LIMBS);
-            Fr::from_monty(scalars[j], scalars[j]);
-        }
-
         const var *multiples = multiples_ + m_off;
         // TODO: Consider loading multiples and/or scalars into shared memory
 
@@ -53,15 +65,14 @@ ec_multiexp_straus(var *out, const var *multiples_, const var *scalars_, size_t 
 
             int q = i / digit::BITS, r = i % digit::BITS;
             for (int j = 0; j < R; ++j) {
-                //(scalars[j][q] >> r) & C_MASK
-                auto g = fixnum::layout();
-                var s = g.shfl(scalars[j].a, q);
+                auto scalar = scalars_ + s_off + j * ELT_LIMBS;
+                var s = scalar[q];
                 var win = (s >> r) & C_MASK;
                 // Handle case where C doesn't divide digit::BITS
                 int bottom_bits = digit::BITS - r;
                 // detect when window overlaps digit boundary
                 if (bottom_bits < C) {
-                    s = g.shfl(scalars[j].a, q + 1);
+                    s = scalar[q + 1];
                     win |= (s << bottom_bits) & C_MASK;
                 }
                 if (win > 0) {
@@ -128,6 +139,13 @@ ec_sum_all(var *X, const var *Y, size_t n)
 }
 
 static constexpr size_t threads_per_block = 256;
+
+template<typename EC>
+void
+ec_scalar_from_monty(var *scalars, size_t N) {
+    size_t nblocks = (N * BIG_WIDTH + threads_per_block - 1) / threads_per_block;
+    ec_scalar_from_monty_kernel<typename EC::group_type><<<nblocks, threads_per_block>>>(scalars, N);
+}
 
 template< typename EC, int C, int R >
 void
