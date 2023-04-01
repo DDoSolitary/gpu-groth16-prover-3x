@@ -3,15 +3,13 @@
 #include "fixnum.cu"
 
 __device__ __constant__
-const var MOD_Q[BIG_WIDTH] = {
+const var MOD_Q[ELT_LIMBS] = {
     0x5e9063de245e8001ULL, 0xe39d54522cdd119fULL,
     0x638810719ac425f0ULL, 0x685acce9767254a4ULL,
     0xb80f0da5cb537e38ULL, 0xb117e776f218059dULL,
     0x99d124d9a15af79dULL, 0x7fdb925e8a0ed8dULL,
     0x5eb7e8f96c97d873ULL, 0xb7f997505b8fafedULL,
     0x10229022eee2cdadULL, 0x1c4c62d92c411ULL
-
-    , 0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL // just to make an even 16
 };
 
 // -Q^{-1} (mod 2^64)
@@ -19,15 +17,13 @@ static constexpr var Q_NINV_MOD = 0xf2044cfbe45e7fffULL;
 
 // 2^768 mod Q
 __device__ __constant__
-const var X_MOD_Q[BIG_WIDTH] = {
+const var X_MOD_Q[ELT_LIMBS] = {
     0x98a8ecabd9dc6f42ULL, 0x91cd31c65a034686ULL,
     0x97c3e4a0cd14572eULL, 0x79589819c788b601ULL,
     0xed269c942108976fULL, 0x1e0f4d8acf031d68ULL,
     0x320c3bb713338559ULL, 0x598b4302d2f00a62ULL,
     0x4074c9cbfd8ca621ULL, 0xfa47edb3865e88cULL,
     0x95455fb31ff9a195ULL, 0x7b479ec8e242ULL
-
-    , 0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL // just to make an even 16
 };
 
 
@@ -42,15 +38,13 @@ struct MNT4_MOD {
 //typedef modulus_info<MOD_Q, Q_NINV_MOD, X_MOD_Q> MNT4_MOD;
 
 __device__ __constant__
-const var MOD_R[BIG_WIDTH] = {
+const var MOD_R[ELT_LIMBS] = {
     0xd90776e240000001ULL, 0x4ea099170fa13a4fULL,
     0xd6c381bc3f005797ULL, 0xb9dff97634993aa4ULL,
     0x3eebca9429212636ULL, 0xb26c5c28c859a99bULL,
     0x99d124d9a15af79dULL, 0x7fdb925e8a0ed8dULL,
     0x5eb7e8f96c97d873ULL, 0xb7f997505b8fafedULL,
     0x10229022eee2cdadULL, 0x1c4c62d92c411ULL
-
-    , 0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL // just to make an even 16
 };
 
 // -R^{-1} (mod 2^64)
@@ -58,15 +52,13 @@ const var R_NINV_MOD = 0xc90776e23fffffffULL;
 
 // 2^768 mod R
 __device__ __constant__
-const var X_MOD_R[BIG_WIDTH] = {
+const var X_MOD_R[ELT_LIMBS] = {
     0xb99680147fff6f42ULL, 0x4eb16817b589cea8ULL,
     0xa1ebd2d90c79e179ULL, 0xf725caec549c0daULL,
     0xab0c4ee6d3e6dad4ULL, 0x9fbca908de0ccb62ULL,
     0x320c3bb713338498ULL, 0x598b4302d2f00a62ULL,
     0x4074c9cbfd8ca621ULL, 0xfa47edb3865e88cULL,
     0x95455fb31ff9a195ULL, 0x7b479ec8e242ULL
-
-    , 0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL // just to make an even 16
 };
 
 struct MNT6_MOD {

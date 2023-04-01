@@ -14,7 +14,7 @@ typedef std::uint64_t var;
 static constexpr size_t ELT_LIMBS = 12;
 static constexpr size_t ELT_BYTES = ELT_LIMBS * sizeof(var);
 
-static constexpr size_t BIG_WIDTH = ELT_LIMBS + 4; // = 16
+static constexpr size_t ELTS_PER_WARP = CUB_PTX_WARP_THREADS /  ELT_LIMBS;
 
 
 struct digit {
@@ -106,43 +106,45 @@ class fixnum_layout {
 #else
     typedef uint32_t Mask;
 #endif
+    int off;
     Mask mask;
 
 public:
     __device__
     fixnum_layout() {
         mask = (Mask)-1 >> (CUB_PTX_WARP_THREADS - WIDTH);
-        mask <<= cub::LaneId() & ~(WIDTH - 1);
+        off = cub::LaneId() / WIDTH * WIDTH;
+        mask <<= off;
     }
 
     __device__ __forceinline__
     Mask ballot(int val) {
-        return (cub::WARP_BALLOT(val, mask) & mask) >> (cub::LaneId() & ~(WIDTH - 1));
+        return (cub::WARP_BALLOT(val, mask) & mask) >> off;
     }
 
     template<typename T>
     __device__ __forceinline__
     T shfl(T val, int src) {
-        return cub::ShuffleIndex<WIDTH>(val, src, mask);
+        return cub::ShuffleIndex<CUB_PTX_WARP_THREADS>(val, src + off, mask);
     }
 
     template<typename T>
     __device__ __forceinline__
     T shfl_up(T val, int offset) {
-        return cub::ShuffleUp<WIDTH>(val, offset, 0, mask);
+        return cub::ShuffleUp<CUB_PTX_WARP_THREADS>(val, offset, 0, mask);
     }
 
     template<typename T>
     __device__ __forceinline__
     T shfl_down(T val, int src) {
-        return cub::ShuffleDown<WIDTH>(val, src, WIDTH - 1, mask);
+        return cub::ShuffleDown<CUB_PTX_WARP_THREADS>(val, src, CUB_PTX_WARP_THREADS - 1, mask);
     }
 };
 
 struct fixnum {
     // 16 because digit::BITS * 16 = 1024 > 768 = digit::bits * 12
     // Must be < 32 for effective_carries to work.
-    static constexpr unsigned WIDTH = 16;
+    static constexpr unsigned WIDTH = ELT_LIMBS;
 
     __device__
     static fixnum_layout<WIDTH> layout() {
@@ -151,7 +153,7 @@ struct fixnum {
 
     __device__ __forceinline__
     static unsigned thread_rank() {
-        return cub::LaneId() & (WIDTH - 1);
+        return cub::LaneId() % WIDTH;
     }
 
     __device__ __forceinline__

@@ -195,16 +195,16 @@ void run_prover(
     //cudaStreamSynchronize(sA);
     //G1 *evaluation_At = B::read_pt_ECp(out_A.get());
 
-    cudaMemcpyAsync(out_B1_h.get(), out_B1.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sB1);
-    cudaStreamSynchronize(sB1);
+    CubDebug(cudaMemcpyAsync(out_B1_h.get(), out_B1.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sB1));
+    CubDebug(cudaStreamSynchronize(sB1));
     G1 *evaluation_Bt1 = B::read_pt_ECp(out_B1_h.get());
 
-    cudaMemcpyAsync(out_B2_h.get(), out_B2.get(), ECpe::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sB2);
-    cudaStreamSynchronize(sB2);
+    CubDebug(cudaMemcpyAsync(out_B2_h.get(), out_B2.get(), ECpe::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sB2));
+    CubDebug(cudaStreamSynchronize(sB2));
     G2 *evaluation_Bt2 = B::read_pt_ECpe(out_B2_h.get());
 
-    cudaMemcpyAsync(out_L_h.get(), out_L.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sL);
-    cudaStreamSynchronize(sL);
+    CubDebug(cudaMemcpyAsync(out_L_h.get(), out_L.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sL));
+    CubDebug(cudaStreamSynchronize(sL));
     G1 *evaluation_Lt = B::read_pt_ECp(out_L_h.get());
 
     print_time(t, "gpu e2e");
@@ -225,9 +225,9 @@ void run_prover(
     print_time(t_main, "Total time from input to output: ");
 
     //cudaStreamDestroy(sA);
-    cudaStreamDestroy(sB1);
-    cudaStreamDestroy(sB2);
-    cudaStreamDestroy(sL);
+    CubDebug(cudaStreamDestroy(sB1));
+    CubDebug(cudaStreamDestroy(sB2));
+    CubDebug(cudaStreamDestroy(sL));
 
     B::delete_vector_G1(H);
 

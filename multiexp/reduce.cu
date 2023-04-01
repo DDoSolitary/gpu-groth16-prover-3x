@@ -4,17 +4,25 @@
 #include <memory>
 #include <algorithm>
 #include <cstdint>
+#include <climits>
 
 #include "curves.cu"
+
+__device__ int
+get_idx() {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    int warp_id = idx >> CUB_PTX_LOG_WARP_THREADS, lane_id = idx & (CUB_PTX_WARP_THREADS - 1);
+    int lane_elt_idx = lane_id / ELT_LIMBS;
+    if (lane_elt_idx >= ELTS_PER_WARP) {
+        return INT_MAX;
+    }
+    return warp_id * ELTS_PER_WARP + lane_elt_idx;
+}
 
 template<typename Fr>
 __global__ void
 ec_scalar_from_monty_kernel(var *scalars_, size_t N) {
-    int T = threadIdx.x, B = blockIdx.x, D = blockDim.x;
-    int elts_per_block = D / BIG_WIDTH;
-    int tileIdx = T / BIG_WIDTH;
-
-    int idx = elts_per_block * B + tileIdx;
+    int idx = get_idx();
     if (idx >= N) {
         return;
     }
@@ -31,11 +39,7 @@ template< typename EC, int C = 4, int RR = 8 >
 __global__ void
 ec_multiexp_straus(var *out, const var *multiples_, const var *scalars_, size_t N)
 {
-    int T = threadIdx.x, B = blockIdx.x, D = blockDim.x;
-    int elts_per_block = D / BIG_WIDTH;
-    int tileIdx = T / BIG_WIDTH;
-
-    int idx = elts_per_block * B + tileIdx;
+    int idx = get_idx();
 
     size_t n = (N + RR - 1) / RR;
     if (idx < n) {
@@ -91,11 +95,7 @@ template< typename EC >
 __global__ void
 ec_multiexp(var *X, const var *W, size_t n)
 {
-    int T = threadIdx.x, B = blockIdx.x, D = blockDim.x;
-    int elts_per_block = D / BIG_WIDTH;
-    int tileIdx = T / BIG_WIDTH;
-
-    int idx = elts_per_block * B + tileIdx;
+    int idx = get_idx();
 
     if (idx < n) {
         typedef typename EC::group_type Fr;
@@ -119,11 +119,7 @@ template< typename EC >
 __global__ void
 ec_sum_all(var *X, const var *Y, size_t n)
 {
-    int T = threadIdx.x, B = blockIdx.x, D = blockDim.x;
-    int elts_per_block = D / BIG_WIDTH;
-    int tileIdx = T / BIG_WIDTH;
-
-    int idx = elts_per_block * B + tileIdx;
+    int idx = get_idx();
 
     if (idx < n) {
         EC z, x, y;
@@ -139,30 +135,33 @@ ec_sum_all(var *X, const var *Y, size_t n)
 }
 
 static constexpr size_t threads_per_block = 256;
+static constexpr size_t elts_per_block = threads_per_block / CUB_PTX_WARP_THREADS * ELTS_PER_WARP;
 
 template<typename EC>
 void
 ec_scalar_from_monty(var *scalars, size_t N) {
-    size_t nblocks = (N * BIG_WIDTH + threads_per_block - 1) / threads_per_block;
+    size_t nblocks = (N + elts_per_block - 1) / elts_per_block;
     ec_scalar_from_monty_kernel<typename EC::group_type><<<nblocks, threads_per_block>>>(scalars, N);
+    CubDebug(cudaGetLastError());
 }
 
 template< typename EC, int C, int R >
 void
 ec_reduce_straus(cudaStream_t &strm, var *out, const var *multiples, const var *scalars, size_t N)
 {
-    cudaStreamCreate(&strm);
+    CubDebug(cudaStreamCreate(&strm));
 
     static constexpr size_t pt_limbs = EC::NELTS * ELT_LIMBS;
     size_t n = (N + R - 1) / R;
 
-    size_t nblocks = (n * BIG_WIDTH + threads_per_block - 1) / threads_per_block;
+    size_t nblocks = (n + elts_per_block - 1) / elts_per_block;
 
     ec_multiexp_straus<EC, C, R><<< nblocks, threads_per_block, 0, strm>>>(out, multiples, scalars, N);
+    CubDebug(cudaGetLastError());
 
     size_t r = n & 1, m = n / 2;
     for ( ; m != 0; r = m & 1, m >>= 1) {
-        nblocks = (m * BIG_WIDTH + threads_per_block - 1) / threads_per_block;
+        nblocks = (m + elts_per_block - 1) / elts_per_block;
 
         ec_sum_all<EC><<<nblocks, threads_per_block, 0, strm>>>(out, out + m*pt_limbs, m);
         if (r)
@@ -174,19 +173,20 @@ template< typename EC >
 void
 ec_reduce(cudaStream_t &strm, var *X, const var *w, size_t n)
 {
-    cudaStreamCreate(&strm);
+    CubDebug(cudaStreamCreate(&strm));
 
-    size_t nblocks = (n * BIG_WIDTH + threads_per_block - 1) / threads_per_block;
+    size_t nblocks = (n + elts_per_block - 1) / elts_per_block;
 
     // FIXME: Only works on Pascal and later.
     //auto grid = cg::this_grid();
     ec_multiexp<EC><<< nblocks, threads_per_block, 0, strm>>>(X, w, n);
+    CubDebug(cudaGetLastError());
 
     static constexpr size_t pt_limbs = EC::NELTS * ELT_LIMBS;
 
     size_t r = n & 1, m = n / 2;
     for ( ; m != 0; r = m & 1, m >>= 1) {
-        nblocks = (m * BIG_WIDTH + threads_per_block - 1) / threads_per_block;
+        nblocks = (m + elts_per_block - 1) / elts_per_block;
 
         ec_sum_all<EC><<<nblocks, threads_per_block, 0, strm>>>(X, X + m*pt_limbs, m);
         if (r)
@@ -202,7 +202,7 @@ static inline double as_mebibytes(size_t n) {
 
 void print_meminfo(size_t allocated) {
     size_t free_mem, dev_mem;
-    cudaMemGetInfo(&free_mem, &dev_mem);
+    CubDebug(cudaMemGetInfo(&free_mem, &dev_mem));
     fprintf(stderr, "Allocated %zu bytes; device has %.1f MiB free (%.1f%%).\n",
             allocated,
             as_mebibytes(free_mem),
@@ -210,14 +210,14 @@ void print_meminfo(size_t allocated) {
 }
 
 struct CudaFree {
-    void operator()(var *mem) { cudaFree(mem); }
+    void operator()(var *mem) { CubDebug(cudaFree(mem)); }
 };
 typedef std::unique_ptr<var, CudaFree> var_ptr;
 
 var_ptr
 allocate_memory(size_t nbytes, int dbg = 0) {
     var *mem = nullptr;
-    cudaMalloc(&mem, nbytes);
+    CubDebug(cudaMalloc(&mem, nbytes));
     if (mem == nullptr) {
         fprintf(stderr, "Failed to allocate enough device memory\n");
         abort();
@@ -228,13 +228,13 @@ allocate_memory(size_t nbytes, int dbg = 0) {
 }
 
 struct CudaFreeHost {
-    void operator()(var *mem) { cudaFreeHost(mem); }
+    void operator()(var *mem) { CubDebug(cudaFreeHost(mem)); }
 };
 
 std::unique_ptr<var, CudaFreeHost>
 allocate_host_memory(size_t nbytes) {
     var *mem = nullptr;
-    cudaHostAlloc(&mem, nbytes, cudaHostAllocDefault);
+    CubDebug(cudaHostAlloc(&mem, nbytes, cudaHostAllocDefault));
     if (mem == nullptr) {
         fprintf(stderr, "Failed to allocate enough host memory\n");
         abort();
@@ -254,7 +254,7 @@ var_ptr read_file_chunked(FILE *f, size_t n) {
             fprintf(stderr, "Failed to read input\n");
             abort();
         }
-        cudaMemcpy(dev_ptr + off, host_ptr, sz, cudaMemcpyHostToDevice);
+        CubDebug(cudaMemcpy(dev_ptr + off, host_ptr, sz, cudaMemcpyHostToDevice));
     }
     return dev_buf;
 }
