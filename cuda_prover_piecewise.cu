@@ -185,11 +185,13 @@ void run_prover(
     std::thread cpu1_thread([&]() {
         auto t_cpu1 = now();
         evaluation_At = B::multiexp_G1(B::input_w(inputs), B::params_A(params), m + 1);
+        print_time(t_cpu1, "cpu multiexp A");
         H = B::params_H(params);
         coefficients_for_H =
             compute_H<B>(d, B::input_ca(inputs), B::input_cb(inputs), B::input_cc(inputs));
+        print_time(t_cpu1, "cpu fft H");
         evaluation_Ht = B::multiexp_G1(coefficients_for_H, H, d);
-        print_time(t_cpu1, "cpu 1");
+        print_time(t_cpu1, "cpu multiexp H");
     });
 
     //cudaStreamSynchronize(sA);
