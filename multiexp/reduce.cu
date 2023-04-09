@@ -93,30 +93,6 @@ ec_multiexp_straus(var *out, const var *multiples_, const var *scalars_, size_t 
 
 template< typename EC >
 __global__ void
-ec_multiexp(var *X, const var *W, size_t n)
-{
-    int idx = get_idx();
-
-    if (idx < n) {
-        typedef typename EC::group_type Fr;
-        EC x;
-        Fr w;
-        int x_off = idx * EC::NELTS * ELT_LIMBS;
-        int w_off = idx * ELT_LIMBS;
-
-        EC::load_affine(x, X + x_off);
-        Fr::load(w, W + w_off);
-
-        // We're given W in Monty form for some reason, so undo that.
-        Fr::from_monty(w, w);
-        EC::mul(x, w.a, x);
-
-        EC::store_jac(X + x_off, x);
-    }
-}
-
-template< typename EC >
-__global__ void
 ec_sum_all(var *X, const var *Y, size_t n)
 {
     int idx = get_idx();
@@ -166,33 +142,6 @@ ec_reduce_straus(cudaStream_t &strm, var *out, const var *multiples, const var *
         ec_sum_all<EC><<<nblocks, threads_per_block, 0, strm>>>(out, out + m*pt_limbs, m);
         if (r)
             ec_sum_all<EC><<<1, threads_per_block, 0, strm>>>(out, out + 2*m*pt_limbs, 1);
-    }
-}
-
-template< typename EC >
-void
-ec_reduce(cudaStream_t &strm, var *X, const var *w, size_t n)
-{
-    CubDebug(cudaStreamCreate(&strm));
-
-    size_t nblocks = (n + elts_per_block - 1) / elts_per_block;
-
-    // FIXME: Only works on Pascal and later.
-    //auto grid = cg::this_grid();
-    ec_multiexp<EC><<< nblocks, threads_per_block, 0, strm>>>(X, w, n);
-    CubDebug(cudaGetLastError());
-
-    static constexpr size_t pt_limbs = EC::NELTS * ELT_LIMBS;
-
-    size_t r = n & 1, m = n / 2;
-    for ( ; m != 0; r = m & 1, m >>= 1) {
-        nblocks = (m + elts_per_block - 1) / elts_per_block;
-
-        ec_sum_all<EC><<<nblocks, threads_per_block, 0, strm>>>(X, X + m*pt_limbs, m);
-        if (r)
-            ec_sum_all<EC><<<1, threads_per_block, 0, strm>>>(X, X + 2*m*pt_limbs, 1);
-        // TODO: Not sure this is really necessary.
-        //grid.sync();
     }
 }
 

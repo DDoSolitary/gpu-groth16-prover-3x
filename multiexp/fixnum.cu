@@ -209,11 +209,6 @@ struct fixnum {
         return nonzero_mask(r) == 0U;
     }
 
-    __device__ static int most_sig_dig(var x) {
-        auto a = nonzero_mask(x);
-        return (sizeof(a) * 8) - (internal::clz(a) + 1);
-    }
-
     __device__ static int cmp(var x, var y) {
         var r;
         int br;

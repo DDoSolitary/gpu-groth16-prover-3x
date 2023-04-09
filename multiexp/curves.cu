@@ -72,27 +72,6 @@ struct ec_jac {
         return FF::are_equal(t0, t1);
     }
 
-#if 0
-    __device__
-    static void
-    store_affine(var *mem, const ec_jac &P) {
-        FF z_inv, z2_inv, z3_inv, aff_x, aff_y;
-
-        // NB: Very expensive!
-        // TODO: Consider (i) doing this on the host and (ii) implementing
-        // simultaneous inversion.
-        FF::inv(z inv, P.z);
-        FF::sqr(z2_inv, z_inv);
-        FF::mul(z3_inv, z2_inv, z_inv);
-
-        FF::mul(aff_x, P.x, z2_inv);
-        FF::store(mem, aff_x);
-
-        FF::mul(aff_y, P.y, z3_inv);
-        FF::store(mem + FF::DEGREE * ELT_LIMBS, aff_y);
-    }
-#endif
-
     __device__
     static void
     store_jac(var *mem, const ec_jac &P) {
@@ -112,38 +91,6 @@ struct ec_jac {
     __device__
     static int
     is_zero(const ec_jac &P) { return FF::is_zero(P.z); }
-
-#if 0
-    // TODO: Needs double-checking
-    __device__
-    static void
-    mixed_dbl(ec_jac &R, const ec_jac &P) {
-        FF xx, yy, yyyy, s, m, t, t0, t1;
-
-        FF::sqr(xx, P.x);      // XX = X1^2
-        FF::sqr(yy, P.y);      // YY = Y1^2
-        FF::sqr(yyyy, yy);     // YYYY = YY^2
-        FF::add(s, P.x, yy);   // t0 = X1+YY
-        FF::sqr(s, s);         // t1 = t0^2
-        FF::sub(s, s, xx);     // t2 = t1-XX
-        FF::sub(s, s, yyyy);   // t3 = t2-YYYY
-        mul_<2>::x(s);         // S = 2*t3
-        mul_<3>::x(m, xx);     // t4 = 3*XX
-
-        // FIXME: Won't work
-        FF::add(m, m, CRV_A);  // M = t4+a
-
-        FF::sqr(t, m);         // t5 = M^2
-        mul_<2>::x(t0, s);     // t6 = 2*S
-        FF::sub(t, t, t0);     // T = t5-t6
-        R.x = t;               // X3 = T
-        mul_<2>::x(R.z, P.y);  // Z3 = 2*Y1
-        FF::sub(t0, s, t);     // t7 = S-T
-        mul_<8>::x(t1, yyyy);  // t8 = 8*YYYY
-        FF::mul(R.y, m, t0);   // t9 = M*t7
-        FF::sub(R.y, R.y, t1); // Y3 = t9-t8
-    }
-#endif
 
     __device__
     static void
@@ -324,95 +271,6 @@ struct ec_jac {
         #pragma unroll
         for (int k = 1; k < EXP; ++k)
             dbl(R, R);
-    }
-
-    __device__
-    static void
-    neg(ec_jac &R, const ec_jac &P) {
-        R.x = P.x;
-        FF::neg(R.y, P.y);
-        R.z = P.z;
-    }
-
-    __device__
-    static void
-    mul(ec_jac &R, const var &n, const ec_jac &P) {
-        // TODO: This version makes an effort to prevent intrawarp
-        // divergence at a performance cost. This is probably no
-        // longer a worthwhile trade-off.
-
-        // TODO: Work out how to use add instead of add_safe.
-
-        static constexpr int WINDOW_SIZE = 5;
-
-        // TODO: I think it is better to use the remainder window
-        // first rather than last. When it's last we sometimes miss
-        // opportunities to use precomputed values.
-
-        // Window decomposition: digit::BITS = q * WINDOW_SIZE + r.
-        static constexpr unsigned WINDOW_REM_BITS = digit::BITS % WINDOW_SIZE;
-        static constexpr unsigned WINDOW_MAX = (1U << WINDOW_SIZE);
-
-        static constexpr unsigned WINDOW_MASK = (1U << WINDOW_SIZE) - 1U;
-        static constexpr unsigned WINDOW_REM_MASK = (1U << WINDOW_REM_BITS) - 1U;
-
-        if (is_zero(P)) {
-            R = P;
-            return;
-        }
-
-        /* G[t] = [t]P, t >= 0 */
-        // TODO: This should be precomputed for all P.
-        ec_jac G[WINDOW_MAX];
-        set_zero(G[0]);
-        G[1] = P;
-        dbl(G[2], P);
-        for (int t = 3; t < WINDOW_MAX; ++t)
-            add(G[t], G[t - 1], P);
-
-        auto g = fixnum::layout();
-
-        int digit_idx = fixnum::most_sig_dig(n);
-        if (digit_idx < 0) {
-            // n == 0
-            R = G[0];
-            return;
-        }
-
-        // First iteration
-        var f = g.shfl(n, digit_idx);
-
-        // "Remainder"
-        int j = digit::BITS - WINDOW_REM_BITS;
-        var win = (f >> j) & WINDOW_REM_MASK;
-        R = G[win];
-        j -= WINDOW_SIZE;
-
-        for (; j >= 0; j -= WINDOW_SIZE) {
-            mul_2exp<WINDOW_SIZE>(R, R);
-            win = (f >> j) & WINDOW_MASK;
-            add(R, R, G[win]);
-        }
-
-        --digit_idx;
-        for ( ; digit_idx >= 0; --digit_idx) {
-            var f = g.shfl(n, digit_idx);
-            var win; // TODO: Morally this should be an int
-
-            // "Remainder"
-            int j = digit::BITS - WINDOW_REM_BITS;
-            mul_2exp<WINDOW_REM_BITS>(R, R);
-            win = (f >> j) & WINDOW_REM_MASK;
-            add(R, R, G[win]);
-
-            j -= WINDOW_SIZE;
-
-            for (; j >= 0; j -= WINDOW_SIZE) {
-                mul_2exp<WINDOW_SIZE>(R, R);
-                win = (f >> j) & WINDOW_MASK;
-                add(R, R, G[win]);
-            }
-        }
     }
 };
 
