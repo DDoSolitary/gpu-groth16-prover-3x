@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 #include <climits>
 #include <utility>
@@ -22,6 +23,9 @@ struct ec_multiexp_config {
     static constexpr int BUCKET_SZ_OFF = 0;
     static constexpr int BUCKET_MAP_OFF = BUCKET_SZ_OFF + BUCKET_SZ_LEN;
     static constexpr int BUCKET_IDX_OFF = BUCKET_MAP_OFF + BUCKET_MAP_LEN;
+
+    static constexpr int MERGE_ITEMS_PER_WIN = (BUCKETS_PER_WIN - 1) * ELTS_PER_WARP;
+    static constexpr int MERGE_LEN = MERGE_ITEMS_PER_WIN * NWIN;
 };
 
 __device__ int
@@ -179,7 +183,7 @@ ec_multiexp_scan(var *scalars, int *out, size_t n, void *temp, size_t temp_size,
     ec_multiexp_scan_sz<C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(keys, n, out_sz);
     CubDebug(cudaGetLastError());
 
-    // attempt to balance bucket sizes (mainly for last window)
+    // attempt to balance bucket sizes by splitting large buckets into other empty ones (mainly for the last window)
     nblocks = (C::NWIN + C::THREADS_PER_BLOCK - 1) / C::THREADS_PER_BLOCK;
     ec_multiexp_balance<C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(out_sz, out_map, (float)n / C::BUCKETS_PER_WIN);
     CubDebug(cudaGetLastError());
@@ -213,86 +217,142 @@ ec_multiexp_point_merge(const var *pts, const int *bucket_info, var *out, size_t
     EC::store_jac(out + idx * EC::NLIMBS, x);
 }
 
-// reduce all buckets in a window
+// per window parallel prefix sum
 template<typename EC, typename C>
 __global__ void
-ec_multiexp_bucket_reduce(var *buckets, const int *bucket_map, var *out) {
+ec_multiexp_prefix_sum(const var *in, var *out, int step) {
     int idx = get_idx();
-    if (idx >= C::NWIN) {
+    int win = idx / C::MERGE_ITEMS_PER_WIN;
+    int i = idx % C::MERGE_ITEMS_PER_WIN;
+    if (win >= C::NWIN) {
         return;
     }
-
-    auto cur_buckets = buckets + idx * (C::BUCKETS_PER_WIN - 1) * ELTS_PER_WARP * EC::NLIMBS;
-    auto cur_map = bucket_map + idx * (C::BUCKETS_PER_WIN - 1);
-
     EC x, y;
-    for (int i = (C::BUCKETS_PER_WIN - 1) * ELTS_PER_WARP - 2; i >= 0; i--) {
-        EC::load_jac(x, cur_buckets + i * EC::NLIMBS);
-        EC::load_jac(y, cur_buckets + (i + 1) * EC::NLIMBS);
+    EC::load_jac(x, in + idx * EC::NLIMBS);
+    if (i + step < C::MERGE_ITEMS_PER_WIN) {
+        EC::load_jac(y, in + (idx + step) * EC::NLIMBS);
         EC::add(x, x, y);
-        EC::store_jac(cur_buckets + i * EC::NLIMBS, x);
     }
+    EC::store_jac(out + idx * EC::NLIMBS, x);
+}
 
-    EC::set_zero(x);
-    for (int i = C::BUCKETS_PER_WIN - 2; i >= 0; i--) {
-        int k = cur_map[i];
+// first iteration of per window parallel sum, also handles load-balanced buckets
+template<typename EC, typename C>
+__global__ void
+ec_multiexp_bucket_reduce_first(const var *in, const int *bucket_map, var *out) {
+    int idx = get_idx();
+    int n = C::BUCKETS_PER_WIN / 2;
+    int win = idx / n;
+    int i = idx % n;
+    if (win >= C::NWIN) {
+        return;
+    }
+    auto cur_map = bucket_map + win * (C::BUCKETS_PER_WIN - 1);
+    auto cur_in = in + win * C::MERGE_ITEMS_PER_WIN * EC::NLIMBS;
+    EC x, y;
+    int j = cur_map[i];
+    if (j < C::BUCKETS_PER_WIN - 1) {
+        EC::load_jac(x, cur_in + j * ELTS_PER_WARP * EC::NLIMBS);
+    } else {
+        EC::set_zero(x);
+    }
+    if (i + n < C::BUCKETS_PER_WIN - 1) {
+        int k = cur_map[i + n];
         if (k < C::BUCKETS_PER_WIN - 1) {
-            EC::load_jac(y, cur_buckets + k * ELTS_PER_WARP * EC::NLIMBS);
+            EC::load_jac(y, cur_in + k * ELTS_PER_WARP * EC::NLIMBS);
             EC::add(x, x, y);
         }
     }
+    EC::store_jac(out + idx * EC::NLIMBS, x);
+}
 
-    // TODO: hard to parallelize, consider preprocessing
-    for (int i = 0; i < idx * C::WIN_BITS; i++) {
-        EC::dbl(x, x);
+// following iterations of per window parallel sum
+template<typename EC, typename C>
+__global__ void
+ec_multiexp_bucket_reduce_next(const var *in, var *out, int m) {
+    // input size is guaranteed to be power of 2 after the first step
+    int n = m / 2;
+    int idx = get_idx();
+    int win = idx / n;
+    int i = idx % n;
+    if (win >= C::NWIN) {
+        return;
+    }
+    auto cur_in = in + win * m * EC::NLIMBS;
+    EC x, y;
+    EC::load_jac(x, cur_in + i * EC::NLIMBS);
+    EC::load_jac(y, cur_in + (i + n) * EC::NLIMBS);
+    EC::add(x, x, y);
+
+    if (n == 1) {
+        for (int i = 0; i < win * C::WIN_BITS; i++) {
+            EC::dbl(x, x);
+        }
     }
 
     EC::store_jac(out + idx * EC::NLIMBS, x);
 }
 
-template< typename EC >
+// simple parallel sum
+template<typename EC>
 __global__ void
-ec_sum_all(var *X, const var *Y, size_t n)
+ec_multiexp_window_reduce(const var *in, var *out, int m)
 {
+    int n = (m + 1) / 2;
     int idx = get_idx();
-
-    if (idx < n) {
-        EC z, x, y;
-        int off = idx * EC::NELTS * ELT_LIMBS;
-
-        EC::load_jac(x, X + off);
-        EC::load_jac(y, Y + off);
-
-        EC::add(z, x, y);
-
-        EC::store_jac(X + off, z);
+    if (idx >= n) {
+        return;
     }
+
+    EC x, y;
+    EC::load_jac(x, in + idx * EC::NLIMBS);
+    if (idx + n < m) {
+        EC::load_jac(y, in + (idx + n) * EC::NLIMBS);
+        EC::add(x, x, y);
+    }
+    EC::store_jac(out + idx * EC::NLIMBS, x);
 }
 
 template<typename EC, typename C>
 void ec_multiexp_pippenger_mem_size(size_t *temp_size, size_t *out_size) {
-    *temp_size = (C::BUCKETS_PER_WIN - 1) * C::NWIN * ELTS_PER_WARP * EC::NLIMBS * sizeof(var); // output of point merge
-    *out_size = C::NWIN * EC::NLIMBS * sizeof(var); // avoid extra copy after inplace sum
+    *temp_size = C::MERGE_LEN * EC::NLIMBS * sizeof(var) * 2; // output of point merge
+    *out_size = EC::NLIMBS * sizeof(var);
 }
 
 template<typename EC, typename C>
 void
 ec_multiexp_pippenger(const var *pts, const int *bucket_info, var *out, void *temp, size_t off, size_t n, cudaStream_t stream) {
+    auto temp1 = (var *)temp;
+    auto temp2 = temp1 + C::MERGE_LEN * EC::NLIMBS;
+
+    // each warp handles one (possibly split) bucket
     int nblocks = ((C::BUCKETS_PER_WIN - 1) * C::NWIN + C::WARPS_PER_BLOCK - 1) / C::WARPS_PER_BLOCK;
-    ec_multiexp_point_merge<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(pts, bucket_info, (var *)temp, off, n);
+    ec_multiexp_point_merge<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(pts, bucket_info, temp1, off, n);
+    CubDebug(cudaGetLastError());
+
+    // calculate prefix sum in each window
+    // load balanced buckets will also be added together
+    for (int i = 1; i < C::MERGE_ITEMS_PER_WIN; i *= 2) {
+        int nblocks = (C::MERGE_LEN + C::ELTS_PER_BLOCK - 1) / C::ELTS_PER_BLOCK;
+        ec_multiexp_prefix_sum<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(temp1, temp2, i);
+        std::swap(temp1, temp2);
+    }
     CubDebug(cudaGetLastError());
 
     auto bucket_map = bucket_info + C::BUCKET_MAP_OFF;
-    nblocks = (C::NWIN + C::ELTS_PER_BLOCK - 1) / C::ELTS_PER_BLOCK;
-    ec_multiexp_bucket_reduce<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>((var *)temp, bucket_map, out);
+    nblocks = (C::BUCKETS_PER_WIN / 2 * C::NWIN + C::ELTS_PER_BLOCK - 1) / C::ELTS_PER_BLOCK;
+    ec_multiexp_bucket_reduce_first<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(temp1, bucket_map, temp2);
+    for (int i = C::BUCKETS_PER_WIN / 2; i > 1; i /= 2) {
+        nblocks = (i / 2 * C::NWIN + C::ELTS_PER_BLOCK - 1) / C::ELTS_PER_BLOCK;
+        ec_multiexp_bucket_reduce_next<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(temp2, temp1, i);
+        std::swap(temp1, temp2);
+    }
     CubDebug(cudaGetLastError());
 
-    for (size_t r = C::NWIN & 1, m = C::NWIN / 2; m != 0; r = m & 1, m >>= 1) {
-        nblocks = (m + C::ELTS_PER_BLOCK - 1) / C::ELTS_PER_BLOCK;
-        ec_sum_all<EC><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(out, out + m * EC::NLIMBS, m);
-        if (r) {
-            ec_sum_all<EC><<<1, C::THREADS_PER_BLOCK, 0, stream>>>(out, out + 2 * m * EC::NLIMBS, 1);
-        }
+    for (int i = C::NWIN; i > 1; i = (i + 1) / 2) {
+        nblocks = ((i + 1) / 2 + C::ELTS_PER_BLOCK - 1) / C::ELTS_PER_BLOCK;
+        auto cur_out = i == 2 ? out : temp2; // write to output buffer on the last iteration
+        ec_multiexp_window_reduce<EC><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(temp2, cur_out, i);
     }
     CubDebug(cudaGetLastError());
 }
