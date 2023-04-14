@@ -108,7 +108,7 @@ void run_prover(
     typedef typename B::G1 G1;
     typedef typename B::G2 G2;
 
-    static constexpr int C = 5;
+    using C = ec_multiexp_config<9>;
 
     cudaStream_t sB1, sB2, sL;
     CubDebug(cudaStreamCreate(&sB1));
