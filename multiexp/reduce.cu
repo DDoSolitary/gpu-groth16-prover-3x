@@ -6,7 +6,9 @@
 #include "utils.cu"
 
 static constexpr int threads_per_block = 256;
-static constexpr int elts_per_block = threads_per_block / CUB_PTX_WARP_THREADS * ELTS_PER_WARP;
+static_assert(threads_per_block % CUB_PTX_WARP_THREADS == 0, "block size must be multiple of warp size");
+static constexpr int warps_per_block = threads_per_block / CUB_PTX_WARP_THREADS;
+static constexpr int elts_per_block = warps_per_block * ELTS_PER_WARP;
 
 __device__ int
 get_idx() {
@@ -87,12 +89,56 @@ ec_multiexp_scan_sz(const int *keys, size_t n, int *out) {
 }
 
 template<int C>
+__global__ void
+ec_multiexp_balance(int *bucket_sz, int *bucket_map, float target) {
+    static constexpr int NWIN = (753 + C - 1) / C;
+    static constexpr int C_MASK = (1 << C) - 1;
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx >= NWIN) {
+        return;
+    }
+    auto cur_sz = bucket_sz + idx * (1 << C);
+    auto cur_map = bucket_map + idx * ((1 << C) - 1);
+    int empty_cnt = 0;
+    for (int i = 0; i < C_MASK; i++) {
+        if (cur_sz[i] == cur_sz[i + 1]) {
+            empty_cnt++;
+        }
+    }
+    int buf[1 << C] = { cur_sz[0] }, cnt = 1;
+    for (int i = 0; i < C_MASK; i++) {
+        cur_map[i] = cnt - 1;
+        int d = cur_sz[i + 1] - cur_sz[i];
+        if (d == 0) {
+            continue;
+        }
+        int k = lroundf(d / target);
+        k = CUB_MIN(k, empty_cnt + 1);
+        if (k <= 1) {
+            buf[cnt++] = cur_sz[i + 1];
+            continue;
+        }
+        int off = 0;
+        for (int j = 0; j < k; j++) {
+            off += d / k + (d % k > j);
+            buf[cnt + j] = cur_sz[i] + off;
+        }
+        cnt += k;
+        empty_cnt -= k - 1;
+    }
+    for (; cnt < (1 << C); cnt++) {
+        buf[cnt] = buf[cnt - 1];
+    }
+    memcpy(cur_sz, buf, (1 << C) * sizeof(int));
+}
+
+template<int C>
 void ec_multiexp_scan_mem_size(size_t n, size_t *temp_size, size_t *out_size) {
     static constexpr int NWIN = (753 + C - 1) / C;
     size_t sort_size;
     CubDebug(cub::DeviceMergeSort::SortPairs(nullptr, sort_size, (int *)nullptr, (int *)nullptr, n * NWIN, dev_cmp<int>()));
     *temp_size = n * NWIN * sizeof(int) + sort_size; // keys + cub temp
-    *out_size = (1 << C) * NWIN * sizeof(int) + n * NWIN * sizeof(int); // sz + idx
+    *out_size = (1 << C) * NWIN * sizeof(int) + ((1 << C) - 1) * NWIN * sizeof(int) + n * NWIN * sizeof(int); // sz + map + idx
 }
 
 // put coefficient indices into buckets
@@ -103,7 +149,8 @@ ec_multiexp_scan(var *scalars, int *out, size_t n, void *temp, size_t temp_size,
     static constexpr int NWIN = (753 + C - 1) / C;
     auto idx_size = n * NWIN;
     auto out_sz = out;
-    auto out_idx = out + (1 << C) * NWIN;
+    auto out_map = out + (1 << C) * NWIN;
+    auto out_idx = out + (1 << C) * NWIN + ((1 << C) - 1) * NWIN;
     auto keys = (int *)temp;
     auto sort_temp = (void *)(keys + idx_size);
     auto sort_temp_size = temp_size - idx_size * sizeof(int);
@@ -125,6 +172,11 @@ ec_multiexp_scan(var *scalars, int *out, size_t n, void *temp, size_t temp_size,
     nblocks = ((n + 1) * NWIN + threads_per_block - 1) / threads_per_block;
     ec_multiexp_scan_sz<C><<<nblocks, threads_per_block, 0, stream>>>(keys, n, out_sz);
     CubDebug(cudaGetLastError());
+
+    // attempt to balance bucket sizes (mainly for last window)
+    nblocks = (NWIN + threads_per_block - 1) / threads_per_block;
+    ec_multiexp_balance<C><<<nblocks, threads_per_block, 0, stream>>>(out_sz, out_map, (float)n / (1 << C));
+    CubDebug(cudaGetLastError());
 }
 
 // TODO: use whole warp for a bucket?
@@ -138,17 +190,19 @@ ec_multiexp_point_merge(const var *pts, const int *bucket_info, var *out, size_t
     static constexpr int AFF_POINT_LIMBS = 2 * EC::field_type::DEGREE * ELT_LIMBS;
 
     int idx = get_idx();
-    int win = idx / C_MASK;
-    int bucket = idx % C_MASK;
+    int group = idx % ELTS_PER_WARP;
+    int warp = idx / ELTS_PER_WARP;
+    int win = warp / C_MASK;
+    int bucket = warp % C_MASK;
     if (win >= NWIN) {
         return;
     }
-    const int *bucket_sz = bucket_info, *bucket_idx = bucket_info + (1 << C) * NWIN;
+    const int *bucket_sz = bucket_info, *bucket_idx = bucket_info + (1 << C) * NWIN + ((1 << C) - 1) * NWIN;
     EC x, m;
     EC::set_zero(x);
     // bucket 0 is skipped
     int l = bucket_sz[bucket + win * (1 << C)], r = bucket_sz[bucket + 1 + win * (1 << C)];
-    for (int j = l; j < r; j++) {
+    for (int j = l + group; j < r; j += ELTS_PER_WARP) {
         int k = bucket_idx[j] - off;
         if (k >= 0 && k < n) {
             EC::load_affine(m, pts + k * AFF_POINT_LIMBS);
@@ -161,7 +215,7 @@ ec_multiexp_point_merge(const var *pts, const int *bucket_info, var *out, size_t
 // reduce all buckets in a window
 template<typename EC, int C>
 __global__ void
-ec_multiexp_bucket_reduce(const var *buckets, var *out) {
+ec_multiexp_bucket_reduce(var *buckets, const int *bucket_map, var *out) {
     static constexpr int NWIN = (753 + C - 1) / C;
     static constexpr int C_MASK = (1 << C) - 1;
     static constexpr int JAC_POINT_LIMBS = 3 * EC::field_type::DEGREE * ELT_LIMBS;
@@ -171,13 +225,24 @@ ec_multiexp_bucket_reduce(const var *buckets, var *out) {
         return;
     }
 
-    EC x, s, m;
+    auto cur_buckets = buckets + idx * C_MASK * ELTS_PER_WARP * JAC_POINT_LIMBS;
+    auto cur_map = bucket_map + idx * ((1 << C) - 1);
+
+    EC x, y;
+    for (int i = C_MASK * ELTS_PER_WARP - 2; i >= 0; i--) {
+        EC::load_jac(x, cur_buckets + i * JAC_POINT_LIMBS);
+        EC::load_jac(y, cur_buckets + (i + 1) * JAC_POINT_LIMBS);
+        EC::add(x, x, y);
+        EC::store_jac(cur_buckets + i * JAC_POINT_LIMBS, x);
+    }
+
     EC::set_zero(x);
-    EC::set_zero(s);
     for (int i = C_MASK - 1; i >= 0; i--) {
-        EC::load_jac(m, buckets + (idx * C_MASK + i) * JAC_POINT_LIMBS);
-        EC::add(s, s, m);
-        EC::add(x, x, s);
+        int k = cur_map[i];
+        if (k < C_MASK) {
+            EC::load_jac(y, cur_buckets + k * JAC_POINT_LIMBS * ELTS_PER_WARP);
+            EC::add(x, x, y);
+        }
     }
 
     // TODO: hard to parallelize, consider preprocessing
@@ -211,7 +276,7 @@ template<typename EC, int C>
 void ec_multiexp_pippenger_mem_size(size_t *temp_size, size_t *out_size) {
     static constexpr int NWIN = (753 + C - 1) / C;
     static constexpr int C_MASK = (1 << C) - 1;
-    *temp_size = C_MASK * NWIN * EC::NELTS * ELT_BYTES; // output of point merge
+    *temp_size = C_MASK * NWIN * ELTS_PER_WARP * EC::NELTS * ELT_BYTES; // output of point merge
     *out_size = NWIN * EC::NELTS * ELT_BYTES; // avoid extra copy after inplace sum
 }
 
@@ -221,12 +286,13 @@ ec_multiexp_pippenger(const var *pts, const int *bucket_info, var *out, void *te
     static constexpr int NWIN = (753 + C - 1) / C;
     static constexpr int C_MASK = (1 << C) - 1;
     
-    int nblocks = (C_MASK * NWIN + elts_per_block - 1) / elts_per_block;
+    int nblocks = (C_MASK * NWIN + warps_per_block - 1) / warps_per_block;
     ec_multiexp_point_merge<EC, C><<<nblocks, threads_per_block, 0, stream>>>(pts, bucket_info, (var *)temp, off, n);
     CubDebug(cudaGetLastError());
 
+    auto bucket_map = bucket_info + (1 << C) * NWIN;
     nblocks = (NWIN + elts_per_block - 1) / elts_per_block;
-    ec_multiexp_bucket_reduce<EC, C><<<nblocks, threads_per_block, 0, stream>>>((const var *)temp, out);
+    ec_multiexp_bucket_reduce<EC, C><<<nblocks, threads_per_block, 0, stream>>>((var *)temp, bucket_map, out);
     CubDebug(cudaGetLastError());
 
     for (size_t r = NWIN & 1, m = NWIN / 2; m != 0; r = m & 1, m >>= 1) {
