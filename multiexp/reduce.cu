@@ -14,7 +14,7 @@ struct ec_multiexp_config {
     static constexpr int ELTS_PER_BLOCK = WARPS_PER_BLOCK * ELTS_PER_WARP;
 
     static constexpr int WIN_BITS = C;
-    static constexpr int NWIN = cub::DivideAndRoundUp(L, WIN_BITS);
+    static constexpr int NWIN = CUB_QUOTIENT_CEILING(L, WIN_BITS);
     static constexpr int WIN_MASK = (1 << WIN_BITS) - 1;
     static constexpr int BUCKETS_PER_WIN = 1 << WIN_BITS;
 
@@ -26,6 +26,8 @@ struct ec_multiexp_config {
 
     static constexpr int MERGE_ITEMS_PER_WIN = (BUCKETS_PER_WIN - 1) * ELTS_PER_WARP;
     static constexpr int MERGE_LEN = MERGE_ITEMS_PER_WIN * NWIN;
+
+    static constexpr int SORT_BITS = WIN_BITS + sizeof(int) * 8 - __builtin_clz(NWIN);
 };
 
 __device__ int
@@ -38,13 +40,6 @@ get_idx() {
     }
     return warp_id * ELTS_PER_WARP + lane_elt_idx;
 }
-
-template<typename T>
-struct dev_cmp {
-    __device__ bool operator()(T x, T y) {
-        return x < y;
-    }
-};
 
 template<typename Fr>
 __global__ void
@@ -63,7 +58,7 @@ ec_scalar_from_monty(var *scalars_, size_t N) {
 // extract bucket id for every window of every coefficient
 template<typename C>
 __global__ void
-ec_multiexp_scan_idx(const var *scalars, int *out_keys, int *out_items, size_t n) {
+ec_multiexp_scan_idx(const var *scalars, uint32_t *out_keys, int *out_items, size_t n) {
     // we assume n * NWIN < INT_MAX
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     int i = idx / C::NWIN;
@@ -86,7 +81,7 @@ ec_multiexp_scan_idx(const var *scalars, int *out_keys, int *out_items, size_t n
 // find sizes of the buckets by differentiation
 template<typename C>
 __global__ void
-ec_multiexp_scan_sz(const int *keys, size_t n, int *out) {
+ec_multiexp_scan_sz(const uint32_t *keys, size_t n, int *out) {
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     int win = idx / (n + 1);
     int i = idx % (n + 1);
@@ -147,10 +142,13 @@ ec_multiexp_balance(const int *in_sz, int *out_sz, int *bucket_map, float target
 
 template<typename C>
 void ec_multiexp_scan_mem_size(size_t n, size_t *temp_size, size_t *out_size) {
-    size_t sort_size;
-    CubDebug(cub::DeviceMergeSort::SortPairs(nullptr, sort_size, (int *)nullptr, (int *)nullptr, n * C::NWIN, dev_cmp<int>()));
-    *temp_size = n * C::NWIN * sizeof(int) + std::max(sort_size, C::BUCKET_SZ_LEN * sizeof(int)); // keys + max(cub sort temp, output of scan_sz)
-    *out_size = (C::BUCKET_SZ_LEN + C::BUCKET_MAP_LEN + n * C::NWIN) * sizeof(int); // sz + map + idx
+    size_t sort_temp_size;
+    size_t sort_len = n * C::NWIN;
+    size_t key_size = sort_len * sizeof(uint32_t);
+    size_t value_size = sort_len * sizeof(int);
+    CubDebug((cub::DeviceRadixSort::SortPairs<uint32_t, int>(nullptr, sort_temp_size, nullptr, nullptr, nullptr, (int *)nullptr, sort_len, 0, C::SORT_BITS)));
+    *temp_size = key_size * 2 + std::max(value_size + sort_temp_size, C::BUCKET_SZ_LEN * sizeof(int)); // keys + max(cub sort temp, output of scan_sz)
+    *out_size = C::BUCKET_SZ_LEN * sizeof(int) + C::BUCKET_MAP_LEN * sizeof(int) + value_size; // sz + map + idx
 }
 
 // put coefficient indices into buckets
@@ -162,31 +160,33 @@ ec_multiexp_scan(var *scalars, int *out, size_t n, void *temp, size_t temp_size,
     auto out_sz = out + C::BUCKET_SZ_OFF;
     auto out_map = out + C::BUCKET_MAP_OFF;
     auto out_idx = out + C::BUCKET_IDX_OFF;
-    auto keys = (int *)temp;
-    auto sort_temp = (void *)(keys + idx_size);
-    auto sort_temp_size = temp_size - idx_size * sizeof(int);
+    auto keys1 = (uint32_t *)temp;
+    auto keys2 = keys1 + idx_size;
+    auto out_temp = (int *)(keys2 + idx_size);
+    auto sort_temp = (void *)(out_temp + idx_size);
+    size_t sort_temp_size = (char *)temp + temp_size - (char *)sort_temp;
 
     // convert from montegomery form
-    int nblocks = cub::DivideAndRoundUp(n, C::ELTS_PER_BLOCK);
+    int nblocks = CUB_QUOTIENT_CEILING(n, C::ELTS_PER_BLOCK);
     ec_scalar_from_monty<Fr><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(scalars, n);
     CubDebug(cudaGetLastError());
 
     // extract bucket id
-    nblocks = cub::DivideAndRoundUp(idx_size, C::THREADS_PER_BLOCK);
-    ec_multiexp_scan_idx<C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(scalars, keys, out_idx, n);
+    nblocks = CUB_QUOTIENT_CEILING(idx_size, C::THREADS_PER_BLOCK);
+    ec_multiexp_scan_idx<C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(scalars, keys1, out_temp, n);
     CubDebug(cudaGetLastError());
 
     // sort so that items with same window & id are grouped together
-    CubDebug(cub::DeviceMergeSort::SortPairs(sort_temp, sort_temp_size, keys, out_idx, idx_size, dev_cmp<int>(), stream));
+    CubDebug(cub::DeviceRadixSort::SortPairs(sort_temp, sort_temp_size, keys1, keys2, out_temp, out_idx, idx_size, 0, C::SORT_BITS, stream));
 
     // find bucket sizes
-    nblocks = cub::DivideAndRoundUp((n + 1) * C::NWIN, C::THREADS_PER_BLOCK);
-    ec_multiexp_scan_sz<C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(keys, n, (int *)sort_temp);
+    nblocks = CUB_QUOTIENT_CEILING((n + 1) * C::NWIN, C::THREADS_PER_BLOCK);
+    ec_multiexp_scan_sz<C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(keys2, n, out_temp);
     CubDebug(cudaGetLastError());
 
     // attempt to balance bucket sizes by splitting large buckets into other empty ones (mainly for the last window)
-    nblocks = cub::DivideAndRoundUp(C::NWIN, C::THREADS_PER_BLOCK);
-    ec_multiexp_balance<C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>((const int *)sort_temp, out_sz, out_map, (float)n / C::BUCKETS_PER_WIN);
+    nblocks = CUB_QUOTIENT_CEILING(C::NWIN, C::THREADS_PER_BLOCK);
+    ec_multiexp_balance<C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(out_temp, out_sz, out_map, (float)n / C::BUCKETS_PER_WIN);
     CubDebug(cudaGetLastError());
 }
 
@@ -327,31 +327,31 @@ ec_multiexp_pippenger(const var *pts, const int *bucket_info, var *out, void *te
     auto temp2 = temp1 + C::MERGE_LEN * EC::NLIMBS;
 
     // each warp handles one (possibly split) bucket
-    int nblocks = cub::DivideAndRoundUp((C::BUCKETS_PER_WIN - 1) * C::NWIN, C::WARPS_PER_BLOCK);
+    int nblocks = CUB_QUOTIENT_CEILING((C::BUCKETS_PER_WIN - 1) * C::NWIN, C::WARPS_PER_BLOCK);
     ec_multiexp_point_merge<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(pts, bucket_info, temp1, off, n);
     CubDebug(cudaGetLastError());
 
     // calculate prefix sum in each window
     // load balanced buckets will also be added together
     for (int i = 1; i < C::MERGE_ITEMS_PER_WIN; i *= 2) {
-        nblocks = cub::DivideAndRoundUp(C::MERGE_LEN, C::ELTS_PER_BLOCK);
+        nblocks = CUB_QUOTIENT_CEILING(C::MERGE_LEN, C::ELTS_PER_BLOCK);
         ec_multiexp_prefix_sum<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(temp1, temp2, i);
         std::swap(temp1, temp2);
     }
     CubDebug(cudaGetLastError());
 
     auto bucket_map = bucket_info + C::BUCKET_MAP_OFF;
-    nblocks = cub::DivideAndRoundUp(C::BUCKETS_PER_WIN / 2 * C::NWIN, C::ELTS_PER_BLOCK);
+    nblocks = CUB_QUOTIENT_CEILING(C::BUCKETS_PER_WIN / 2 * C::NWIN, C::ELTS_PER_BLOCK);
     ec_multiexp_bucket_reduce_first<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(temp1, bucket_map, temp2);
     for (int i = C::BUCKETS_PER_WIN / 2; i > 1; i /= 2) {
-        nblocks = cub::DivideAndRoundUp(i / 2 * C::NWIN, C::ELTS_PER_BLOCK);
+        nblocks = CUB_QUOTIENT_CEILING(i / 2 * C::NWIN, C::ELTS_PER_BLOCK);
         ec_multiexp_bucket_reduce_next<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(temp2, temp1, i);
         std::swap(temp1, temp2);
     }
     CubDebug(cudaGetLastError());
 
     for (int i = C::NWIN; i > 1; i = (i + 1) / 2) {
-        nblocks = cub::DivideAndRoundUp((i + 1) / 2, C::ELTS_PER_BLOCK);
+        nblocks = CUB_QUOTIENT_CEILING((i + 1) / 2, C::ELTS_PER_BLOCK);
         auto cur_out = i == 2 ? out : temp2; // write to output buffer on the last iteration
         ec_multiexp_window_reduce<EC><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(temp2, cur_out, i);
     }
