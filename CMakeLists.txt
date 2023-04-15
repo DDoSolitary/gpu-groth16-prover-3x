@@ -258,11 +258,16 @@ add_subdirectory(depends)
 add_subdirectory(libsnark)
 add_subdirectory(cuda-fixnum)
 
-add_executable (
-    cuda_prover_piecewise
-    EXCLUDE_FROM_ALL
-
-    cuda_prover_piecewise.cu
-)
 find_package(Threads)
-target_link_libraries(cuda_prover_piecewise prover_reference_functions Threads::Threads)
+add_custom_target(cuda_prover_piecewise)
+foreach(MULTIEXP_WIN_BITS 5 6 7 8 9 10 11 12)
+  foreach(MULTIEXP_BLOCK_SIZE 128 256)
+    set(PROVER_TARGET_NAME "cuda_prover_piecewise_${MULTIEXP_WIN_BITS}_${MULTIEXP_BLOCK_SIZE}")
+    add_executable("${PROVER_TARGET_NAME}" EXCLUDE_FROM_ALL cuda_prover_piecewise.cu)
+    target_link_libraries("${PROVER_TARGET_NAME}" prover_reference_functions Threads::Threads)
+    target_compile_definitions("${PROVER_TARGET_NAME}" PRIVATE
+      "MULTIEXP_WIN_BITS=${MULTIEXP_WIN_BITS}"
+      "MULTIEXP_BLOCK_SIZE=${MULTIEXP_BLOCK_SIZE}")
+    add_dependencies(cuda_prover_piecewise "${PROVER_TARGET_NAME}")
+  endforeach()
+endforeach()
