@@ -1,6 +1,8 @@
 #include <string>
 #include <chrono>
 #include <thread>
+#include <map>
+#include <functional>
 
 #define NDEBUG 1
 #define CUB_STDERR
@@ -95,20 +97,17 @@ print_time(T &t1, const char *str) {
     t1 = t2;
 }
 
-template <typename B>
+template<typename B, typename C>
 void run_prover(
         const char *params_path,
         const char *input_path,
-        const char *output_path,
-        const char *preprocessed_path)
+        const char *output_path)
 {
     typedef typename ec_type<B>::ECp ECp;
     typedef typename ec_type<B>::ECpe ECpe;
 
     typedef typename B::G1 G1;
     typedef typename B::G2 G2;
-
-    using C = ec_multiexp_config<9>;
 
     cudaStream_t sB1, sB2, sL;
     CubDebug(cudaStreamCreate(&sB1));
@@ -243,6 +242,12 @@ void run_prover(
     print_time(beginning, "Total runtime (incl. file reads)");
 }
 
+#define PROVER_1(a1, a2, b, c) { { a1, b, c }, run_prover<a2, ec_multiexp_config<b, 753, c>> }
+#define PROVER_2(b, c) PROVER_1("MNT4753", mnt4753_libsnark, b, c), PROVER_1("MNT6753", mnt6753_libsnark, b, c)
+#define PROVER_3(c) PROVER_2(5, c), PROVER_2(6, c), PROVER_2(7, c), PROVER_2(8, c), PROVER_2(9, c), PROVER_2(10, c), PROVER_2(11, c), PROVER_2(12, c), PROVER_2(13, c), PROVER_2(14, c), PROVER_2(15, c), PROVER_2(16, c)
+#define PROVER PROVER_3(128), PROVER_3(256)
+const std::map<std::tuple<std::string, int, int>, std::function<void(const char *, const char *, const char *)>> provers{ PROVER };
+
 int main(int argc, char **argv) {
   setbuf(stdout, NULL);
   std::string curve(argv[1]);
@@ -253,20 +258,9 @@ int main(int argc, char **argv) {
   if (mode == "compute") {
       const char *input_path = argv[4];
       const char *output_path = argv[5];
-
-      if (curve == "MNT4753") {
-          run_prover<mnt4753_libsnark>(params_path, input_path, output_path, "MNT4753_preprocessed");
-      } else if (curve == "MNT6753") {
-          run_prover<mnt6753_libsnark>(params_path, input_path, output_path, "MNT6753_preprocessed");
-      }
-  } else if (mode == "preprocess") {
-#if 0
-      if (curve == "MNT4753") {
-          run_preprocess<mnt4753_libsnark>(params_path);
-      } else if (curve == "MNT6753") {
-          run_preprocess<mnt4753_libsnark>(params_path);
-      }
-#endif
+      int c = std::stoi(argv[6]);
+      int b = std::stoi(argv[7]);
+      provers.at({ curve, c, b })(params_path, input_path, output_path);
   }
 
   return 0;
