@@ -109,7 +109,8 @@ void run_prover(
     typedef typename B::G1 G1;
     typedef typename B::G2 G2;
 
-    cudaStream_t sB1, sB2, sL;
+    cudaStream_t sA, sB1, sB2, sL;
+    CubDebug(cudaStreamCreate(&sA));
     CubDebug(cudaStreamCreate(&sB1));
     CubDebug(cudaStreamCreate(&sB2));
     CubDebug(cudaStreamCreate(&sL));
@@ -145,6 +146,8 @@ void run_prover(
 
     auto scan_temp = allocate_memory<void>(scan_temp_size);
     auto scan_out = allocate_memory<int>(scan_out_size);
+    auto temp_A = allocate_memory<void>(temp_size_G1);
+    auto out_A = allocate_memory<var>(out_size_G1);
     auto temp_B1 = allocate_memory<void>(temp_size_G1);
     auto out_B1 = allocate_memory<var>(out_size_G1);
     auto temp_B2 = allocate_memory<void>(temp_size_G2);
@@ -152,6 +155,7 @@ void run_prover(
     auto temp_L = allocate_memory<void>(temp_size_G1);
     auto out_L = allocate_memory<var>(out_size_G1);
 
+    auto out_A_h = allocate_host_memory(ECp::NELTS * ELT_BYTES);
     auto out_B1_h = allocate_host_memory(ECp::NELTS * ELT_BYTES);
     auto out_B2_h = allocate_host_memory(ECpe::NELTS * ELT_BYTES);
     auto out_L_h = allocate_host_memory(ECp::NELTS * ELT_BYTES);
@@ -172,15 +176,16 @@ void run_prover(
     auto t_gpu = t;
 
     ec_multiexp_scan<typename ECp::group_type, C>(w, scan_out.get(), m + 1, scan_temp.get(), scan_temp_size, nullptr);
+    ec_multiexp_pippenger<ECp, C>(A_pts.get(), scan_out.get(), out_A.get(), temp_A.get(), 0, m + 1, sA);
     ec_multiexp_pippenger<ECp, C>(B1_pts.get(), scan_out.get(), out_B1.get(), temp_B1.get(), 0, m + 1, sB1);
     ec_multiexp_pippenger<ECpe, C>(B2_pts.get(), scan_out.get(), out_B2.get(), temp_B2.get(), 0, m + 1, sB2);
     ec_multiexp_pippenger<ECp, C>(L_pts.get(), scan_out.get(), out_L.get(), temp_L.get(), 2, m - 1, sL);
+    CubDebug(cudaMemcpyAsync(out_A_h.get(), out_A.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sA));
     CubDebug(cudaMemcpyAsync(out_B1_h.get(), out_B1.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sB1));
     CubDebug(cudaMemcpyAsync(out_B2_h.get(), out_B2.get(), ECpe::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sB2));
     CubDebug(cudaMemcpyAsync(out_L_h.get(), out_L.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sL));
     print_time(t_gpu, "gpu launch");
 
-    G1 *evaluation_At;
     // Do calculations relating to H on CPU after having set the GPU in
     // motion
     typename B::vector_G1 *H;
@@ -188,8 +193,6 @@ void run_prover(
     G1 *evaluation_Ht;
     std::thread cpu1_thread([&]() {
         auto t_cpu1 = now();
-        evaluation_At = B::multiexp_G1(B::input_w(inputs), B::params_A(params), m + 1);
-        print_time(t_cpu1, "cpu multiexp A");
         H = B::params_H(params);
         coefficients_for_H =
             compute_H<B>(d, B::input_ca(inputs), B::input_cb(inputs), B::input_cc(inputs));
@@ -198,6 +201,8 @@ void run_prover(
         print_time(t_cpu1, "cpu multiexp H");
     });
 
+    CubDebug(cudaStreamSynchronize(sA));
+    G1 *evaluation_At = B::read_pt_ECp(out_A_h.get());
     CubDebug(cudaStreamSynchronize(sB1));
     G1 *evaluation_Bt1 = B::read_pt_ECp(out_B1_h.get());
     CubDebug(cudaStreamSynchronize(sB2));
@@ -221,6 +226,7 @@ void run_prover(
 
     print_time(t_main, "Total time from input to output: ");
 
+    CubDebug(cudaStreamDestroy(sA));
     CubDebug(cudaStreamDestroy(sB1));
     CubDebug(cudaStreamDestroy(sB2));
     CubDebug(cudaStreamDestroy(sL));
