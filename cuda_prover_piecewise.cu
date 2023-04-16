@@ -242,7 +242,7 @@ void run_prover(
     print_time(beginning, "Total runtime (incl. file reads)");
 }
 
-int main(int argc, char **argv) {
+int main(int, char **argv) {
   setbuf(stdout, NULL);
   std::string curve(argv[1]);
   std::string mode(argv[2]);

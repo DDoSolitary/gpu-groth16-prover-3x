@@ -106,32 +106,10 @@ else()
   set(DEPENDS_DIR "${DEPENDS_DIR}")
 endif()
 
-if(CMAKE_COMPILER_IS_GNUCXX OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-  # Common compilation flags and warning configuration
-  set(
-    CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -std=c++14 -Wall -Wextra -Wfatal-errors"
-  )
-  if("${MULTICORE}")
-      if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xpreprocessor -fopenmp")
-      else()
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
-      endif()
-  endif()
-  # Default optimizations flags (to override, use -DOPT_FLAGS=...)
-  if("${OPT_FLAGS}" STREQUAL "")
-    set(
-      OPT_FLAGS
-      "-ggdb3 -O2 -march=westmere -mtune=skylake-avx512"
-    )
-  endif()
-endif()
-
-set(
-  CMAKE_CXX_FLAGS
-  "${CMAKE_CXX_FLAGS} ${OPT_FLAGS}"
-)
+set(CMAKE_CXX_STANDARD 17)
+find_package(OpenMP REQUIRED)
+link_libraries(OpenMP::OpenMP_CXX)
+add_compile_options(-Wall -Wextra -Wfatal-errors)
 
 find_path(GMP_INCLUDE_DIR NAMES gmp.h)
 find_library(GMP_LIBRARIES NAMES gmp libgmp)
@@ -213,15 +191,8 @@ if("${CPPDEBUG}")
 endif()
 
 if("${PERFORMANCE}")
-  add_definitions(-DNDEBUG)
-  set(
-    CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -flto -fuse-linker-plugin"
-  )
-  set(
-    CMAKE_EXE_LINKER_FLAGS
-    "${CMAKE_EXE_LINKER_FLAGS} -flto"
-  )
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+  add_compile_options(-march=native)
 endif()
 
 if("${USE_ASM}")
@@ -268,6 +239,7 @@ foreach(MULTIEXP_WIN_BITS 5 6 7 8 9 10 11 12)
     target_compile_definitions("${PROVER_TARGET_NAME}" PRIVATE
       "MULTIEXP_WIN_BITS=${MULTIEXP_WIN_BITS}"
       "MULTIEXP_BLOCK_SIZE=${MULTIEXP_BLOCK_SIZE}")
+    target_compile_options("${PROVER_TARGET_NAME}" PRIVATE -Wno-sign-compare)
     add_dependencies(cuda_prover_piecewise "${PROVER_TARGET_NAME}")
   endforeach()
 endforeach()
