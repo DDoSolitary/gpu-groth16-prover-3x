@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <libff/algebra/curves/mnt753/mnt4753/mnt4753_pp.hpp>
 #include <libff/algebra/curves/mnt753/mnt6753/mnt6753_pp.hpp>
@@ -24,7 +25,6 @@ using namespace libsnark;
 
 const multi_exp_method method = multi_exp_method_bos_coster;
 //const multi_exp_method method = multi_exp_method_BDLO12;
-
 
 template< typename EC >
 struct ff_dict;
@@ -136,29 +136,38 @@ public:
   Fr<mnt4753_pp> r;
 
   groth16_input(FILE *inputs, size_t d, size_t m) {
-    w = std::make_shared<std::vector<libff::Fr<mnt4753_pp>>>(
-        std::vector<libff::Fr<mnt4753_pp>>());
-    ca = std::make_shared<std::vector<libff::Fr<mnt4753_pp>>>(
-        std::vector<libff::Fr<mnt4753_pp>>());
-    cb = std::make_shared<std::vector<libff::Fr<mnt4753_pp>>>(
-        std::vector<libff::Fr<mnt4753_pp>>());
-    cc = std::make_shared<std::vector<libff::Fr<mnt4753_pp>>>(
-        std::vector<libff::Fr<mnt4753_pp>>());
+    w = std::make_shared<vec_uninit<libff::Fr<mnt4753_pp>>>(m + 1);
+    ca = std::make_shared<vec_uninit<libff::Fr<mnt4753_pp>>>(d + 1);
+    cb = std::make_shared<vec_uninit<libff::Fr<mnt4753_pp>>>(d + 1);
+    cc = std::make_shared<vec_uninit<libff::Fr<mnt4753_pp>>>(d + 1);
 
     for (size_t i = 0; i < m + 1; ++i) {
-      w->emplace_back(read_fr<mnt4753_pp>(inputs));
+      read_fr<mnt4753_pp>(inputs, (*w)[i]);
     }
     for (size_t i = 0; i < d + 1; ++i) {
-      ca->emplace_back(read_fr<mnt4753_pp>(inputs));
+      read_fr<mnt4753_pp>(inputs, (*ca)[i]);
     }
     for (size_t i = 0; i < d + 1; ++i) {
-      cb->emplace_back(read_fr<mnt4753_pp>(inputs));
+      read_fr<mnt4753_pp>(inputs, (*cb)[i]);
     }
     for (size_t i = 0; i < d + 1; ++i) {
-      cc->emplace_back(read_fr<mnt4753_pp>(inputs));
+      read_fr<mnt4753_pp>(inputs, (*cc)[i]);
     }
 
-    r = read_fr<mnt4753_pp>(inputs);
+    read_fr<mnt4753_pp>(inputs, r);
+  }
+
+  groth16_input(void *p_, size_t d, size_t m) {
+    auto p = static_cast<libff::Fr<mnt4753_pp> *>(p_);
+    w = std::make_shared<vec_ptr<libff::Fr<mnt4753_pp>>>(p, m + 1);
+    p += m + 1;
+    ca = std::make_shared<vec_ptr<libff::Fr<mnt4753_pp>>>(p, d + 1);
+    p += d + 1;
+    cb = std::make_shared<vec_ptr<libff::Fr<mnt4753_pp>>>(p, d + 1);
+    p += d + 1;
+    cc = std::make_shared<vec_ptr<libff::Fr<mnt4753_pp>>>(p, d + 1);
+    p += d + 1;
+    memcpy(&r, p, sizeof(r));
   }
 };
 
@@ -177,31 +186,36 @@ public:
         abort();
     }
 
-    A = std::make_shared<std::vector<libff::G1<mnt4753_pp>>>(
-        std::vector<libff::G1<mnt4753_pp>>());
-    B1 = std::make_shared<std::vector<libff::G1<mnt4753_pp>>>(
-        std::vector<libff::G1<mnt4753_pp>>());
-    L = std::make_shared<std::vector<libff::G1<mnt4753_pp>>>(
-        std::vector<libff::G1<mnt4753_pp>>());
-    H = std::make_shared<std::vector<libff::G1<mnt4753_pp>>>(
-        std::vector<libff::G1<mnt4753_pp>>());
-    B2 = std::make_shared<std::vector<libff::G2<mnt4753_pp>>>(
-        std::vector<libff::G2<mnt4753_pp>>());
+    A = std::make_shared<vec_uninit<libff::G1<mnt4753_pp>>>(m + 1);
+    B1 = std::make_shared<vec_uninit<libff::G1<mnt4753_pp>>>(m + 1);
+    B2 = std::make_shared<vec_uninit<libff::G2<mnt4753_pp>>>(m + 1);
+    L = std::make_shared<vec_uninit<libff::G1<mnt4753_pp>>>(m - 1);
+    H = std::make_shared<vec_uninit<libff::G1<mnt4753_pp>>>(d);
     for (size_t i = 0; i <= m; ++i) {
-      A->emplace_back(read_g1<mnt4753_pp>(params));
+      read_g1<mnt4753_pp>(params, (*A)[i]);
     }
     for (size_t i = 0; i <= m; ++i) {
-      B1->emplace_back(read_g1<mnt4753_pp>(params));
+      read_g1<mnt4753_pp>(params, (*B1)[i]);
     }
     for (size_t i = 0; i <= m; ++i) {
-      B2->emplace_back(read_g2<mnt4753_pp>(params));
+      read_g2<mnt4753_pp>(params, (*B2)[i]);
     }
     for (size_t i = 0; i < m - 1; ++i) {
-      L->emplace_back(read_g1<mnt4753_pp>(params));
+      read_g1<mnt4753_pp>(params, (*L)[i]);
     }
     for (size_t i = 0; i < d; ++i) {
-      H->emplace_back(read_g1<mnt4753_pp>(params));
+      read_g1<mnt4753_pp>(params, (*H)[i]);
     }
+  }
+
+  groth16_params(size_t dd, size_t mm) {
+    d = dd;
+    m = mm;
+    A = std::make_shared<vec_uninit<libff::G1<mnt4753_pp>>>(m + 1);
+    B1 = std::make_shared<vec_uninit<libff::G1<mnt4753_pp>>>(m + 1);
+    B2 = std::make_shared<vec_uninit<libff::G2<mnt4753_pp>>>(m + 1);
+    L = std::make_shared<vec_uninit<libff::G1<mnt4753_pp>>>(m - 1);
+    H = std::make_shared<vec_uninit<libff::G1<mnt4753_pp>>>(d);
   }
 };
 
@@ -372,6 +386,11 @@ mnt4753_libsnark::read_input(FILE *inputs, size_t d, size_t m) {
   return new mnt4753_libsnark::groth16_input(inputs, d, m);
 }
 
+mnt4753_libsnark::groth16_input *
+mnt4753_libsnark::make_input(void *p, size_t d, size_t m) {
+  return new mnt4753_libsnark::groth16_input(p, d, m);
+}
+
 mnt4753_libsnark::vector_Fr *
 mnt4753_libsnark::input_w(mnt4753_libsnark::groth16_input *input) {
   return new mnt4753_libsnark::vector_Fr{.data = input->w, .offset = 0};
@@ -414,7 +433,57 @@ mnt4753_libsnark::field *mnt4753_libsnark::input_r(groth16_input *input) {
 
 mnt4753_libsnark::groth16_params *
 mnt4753_libsnark::read_params(FILE *params, size_t d, size_t m) {
-    return new mnt4753_libsnark::groth16_params(params, d, m);
+  return new mnt4753_libsnark::groth16_params(params, d, m);
+}
+
+mnt4753_libsnark::groth16_params *
+mnt4753_libsnark::alloc_params(size_t d, size_t m) {
+  return new mnt4753_libsnark::groth16_params(d, m);
+}
+
+void
+mnt4753_libsnark::read_params_A(mnt4753_libsnark::groth16_params *params, const void *p_) {
+  auto p = static_cast<const char *>(p_);
+  for (size_t i = 0; i <= params->m; ++i) {
+    read_g1<mnt4753_pp>(params, (*params->A)[i]);
+    p += sizeof(Fq<mnt4753_pp>) * 2;
+  }
+}
+
+void
+mnt4753_libsnark::read_params_B1(mnt4753_libsnark::groth16_params *params, const void *p_) {
+  auto p = static_cast<const char *>(p_);
+  for (size_t i = 0; i <= params->m; ++i) {
+    read_g1<mnt4753_pp>(p, (*params->B1)[i]);
+    p += sizeof(Fq<mnt4753_pp>) * 2;
+  }
+}
+
+void
+mnt4753_libsnark::read_params_L(mnt4753_libsnark::groth16_params *params, const void *p_) {
+  auto p = static_cast<const char *>(p_);
+  for (size_t i = 0; i < params->m - 1; ++i) {
+    read_g1<mnt4753_pp>(p, (*params->L)[i]);
+    p += sizeof(Fq<mnt4753_pp>) * 2;
+  }
+}
+
+void
+mnt4753_libsnark::read_params_H(mnt4753_libsnark::groth16_params *params, const void *p_) {
+  auto p = static_cast<const char *>(p_);
+  for (size_t i = 0; i < params->d; ++i) {
+    read_g1<mnt4753_pp>(p, (*params->H)[i]);
+    p += sizeof(Fq<mnt4753_pp>) * 2;
+  }
+}
+
+void
+mnt4753_libsnark::read_params_B2(mnt4753_libsnark::groth16_params *params, const void *p_) {
+  auto p = static_cast<const char *>(p_);
+  for (size_t i = 0; i <= params->m; ++i) {
+    read_g2<mnt4753_pp>(p, (*params->B2)[i]);
+    p += sizeof(Fqe<mnt4753_pp>) * 2;
+  }
 }
 
 void mnt4753_libsnark::delete_G1(mnt4753_libsnark::G1 *a) { delete a; }
@@ -458,29 +527,38 @@ public:
   Fr<mnt6753_pp> r;
 
   groth16_input(FILE *inputs, size_t d, size_t m) {
-    w = std::make_shared<std::vector<libff::Fr<mnt6753_pp>>>(
-        std::vector<libff::Fr<mnt6753_pp>>());
-    ca = std::make_shared<std::vector<libff::Fr<mnt6753_pp>>>(
-        std::vector<libff::Fr<mnt6753_pp>>());
-    cb = std::make_shared<std::vector<libff::Fr<mnt6753_pp>>>(
-        std::vector<libff::Fr<mnt6753_pp>>());
-    cc = std::make_shared<std::vector<libff::Fr<mnt6753_pp>>>(
-        std::vector<libff::Fr<mnt6753_pp>>());
+    w = std::make_shared<vec_uninit<libff::Fr<mnt6753_pp>>>(m + 1);
+    ca = std::make_shared<vec_uninit<libff::Fr<mnt6753_pp>>>(d + 1);
+    cb = std::make_shared<vec_uninit<libff::Fr<mnt6753_pp>>>(d + 1);
+    cc = std::make_shared<vec_uninit<libff::Fr<mnt6753_pp>>>(d + 1);
 
     for (size_t i = 0; i < m + 1; ++i) {
-      w->emplace_back(read_fr<mnt6753_pp>(inputs));
+      read_fr<mnt6753_pp>(inputs, (*w)[i]);
     }
     for (size_t i = 0; i < d + 1; ++i) {
-      ca->emplace_back(read_fr<mnt6753_pp>(inputs));
+      read_fr<mnt6753_pp>(inputs, (*ca)[i]);
     }
     for (size_t i = 0; i < d + 1; ++i) {
-      cb->emplace_back(read_fr<mnt6753_pp>(inputs));
+      read_fr<mnt6753_pp>(inputs, (*cb)[i]);
     }
     for (size_t i = 0; i < d + 1; ++i) {
-      cc->emplace_back(read_fr<mnt6753_pp>(inputs));
+      read_fr<mnt6753_pp>(inputs, (*cc)[i]);
     }
 
-    r = read_fr<mnt6753_pp>(inputs);
+    read_fr<mnt6753_pp>(inputs, r);
+  }
+
+  groth16_input(void *p_, size_t d, size_t m) {
+    auto p = static_cast<libff::Fr<mnt6753_pp> *>(p_);
+    w = std::make_shared<vec_ptr<libff::Fr<mnt6753_pp>>>(p, m + 1);
+    p += m + 1;
+    ca = std::make_shared<vec_ptr<libff::Fr<mnt6753_pp>>>(p, d + 1);
+    p += d + 1;
+    cb = std::make_shared<vec_ptr<libff::Fr<mnt6753_pp>>>(p, d + 1);
+    p += d + 1;
+    cc = std::make_shared<vec_ptr<libff::Fr<mnt6753_pp>>>(p, d + 1);
+    p += d + 1;
+    memcpy(&r, p, sizeof(r));
   }
 };
 
@@ -499,31 +577,36 @@ public:
         abort();
     }
 
-    A = std::make_shared<std::vector<libff::G1<mnt6753_pp>>>(
-        std::vector<libff::G1<mnt6753_pp>>());
-    B1 = std::make_shared<std::vector<libff::G1<mnt6753_pp>>>(
-        std::vector<libff::G1<mnt6753_pp>>());
-    L = std::make_shared<std::vector<libff::G1<mnt6753_pp>>>(
-        std::vector<libff::G1<mnt6753_pp>>());
-    H = std::make_shared<std::vector<libff::G1<mnt6753_pp>>>(
-        std::vector<libff::G1<mnt6753_pp>>());
-    B2 = std::make_shared<std::vector<libff::G2<mnt6753_pp>>>(
-        std::vector<libff::G2<mnt6753_pp>>());
+    A = std::make_shared<vec_uninit<libff::G1<mnt6753_pp>>>(m + 1);
+    B1 = std::make_shared<vec_uninit<libff::G1<mnt6753_pp>>>(m + 1);
+    B2 = std::make_shared<vec_uninit<libff::G2<mnt6753_pp>>>(m + 1);
+    L = std::make_shared<vec_uninit<libff::G1<mnt6753_pp>>>(m - 1);
+    H = std::make_shared<vec_uninit<libff::G1<mnt6753_pp>>>(d);
     for (size_t i = 0; i <= m; ++i) {
-      A->emplace_back(read_g1<mnt6753_pp>(params));
+      read_g1<mnt6753_pp>(params, (*A)[i]);
     }
     for (size_t i = 0; i <= m; ++i) {
-      B1->emplace_back(read_g1<mnt6753_pp>(params));
+      read_g1<mnt6753_pp>(params, (*B1)[i]);
     }
     for (size_t i = 0; i <= m; ++i) {
-      B2->emplace_back(read_g2<mnt6753_pp>(params));
+      read_g2<mnt6753_pp>(params, (*B2)[i]);
     }
     for (size_t i = 0; i < m - 1; ++i) {
-      L->emplace_back(read_g1<mnt6753_pp>(params));
+      read_g1<mnt6753_pp>(params, (*L)[i]);
     }
     for (size_t i = 0; i < d; ++i) {
-      H->emplace_back(read_g1<mnt6753_pp>(params));
+      read_g1<mnt6753_pp>(params, (*H)[i]);
     }
+  }
+
+  groth16_params(size_t dd, size_t mm) {
+    d = dd;
+    m = mm;
+    A = std::make_shared<vec_uninit<libff::G1<mnt6753_pp>>>(m + 1);
+    B1 = std::make_shared<vec_uninit<libff::G1<mnt6753_pp>>>(m + 1);
+    B2 = std::make_shared<vec_uninit<libff::G2<mnt6753_pp>>>(m + 1);
+    L = std::make_shared<vec_uninit<libff::G1<mnt6753_pp>>>(m - 1);
+    H = std::make_shared<vec_uninit<libff::G1<mnt6753_pp>>>(d);
   }
 };
 
@@ -712,6 +795,11 @@ mnt6753_libsnark::read_input(FILE *inputs, size_t d, size_t m) {
   return new mnt6753_libsnark::groth16_input(inputs, d, m);
 }
 
+mnt6753_libsnark::groth16_input *
+mnt6753_libsnark::make_input(void *p, size_t d, size_t m) {
+  return new mnt6753_libsnark::groth16_input(p, d, m);
+}
+
 mnt6753_libsnark::vector_Fr *
 mnt6753_libsnark::input_w(mnt6753_libsnark::groth16_input *input) {
   return new mnt6753_libsnark::vector_Fr{.data = input->w, .offset = 0};
@@ -755,6 +843,56 @@ mnt6753_libsnark::field *mnt6753_libsnark::input_r(groth16_input *input) {
 mnt6753_libsnark::groth16_params *
 mnt6753_libsnark::read_params(FILE *params, size_t d, size_t m) {
     return new mnt6753_libsnark::groth16_params(params, d, m);
+}
+
+mnt6753_libsnark::groth16_params *
+mnt6753_libsnark::alloc_params(size_t d, size_t m) {
+  return new mnt6753_libsnark::groth16_params(d, m);
+}
+
+void
+mnt6753_libsnark::read_params_A(mnt6753_libsnark::groth16_params *params, const void *p_) {
+  auto p = static_cast<const char *>(p_);
+  for (size_t i = 0; i <= params->m; ++i) {
+    read_g1<mnt6753_pp>(params, (*params->A)[i]);
+    p += sizeof(Fq<mnt6753_pp>) * 2;
+  }
+}
+
+void
+mnt6753_libsnark::read_params_B1(mnt6753_libsnark::groth16_params *params, const void *p_) {
+  auto p = static_cast<const char *>(p_);
+  for (size_t i = 0; i <= params->m; ++i) {
+    read_g1<mnt6753_pp>(p, (*params->B1)[i]);
+    p += sizeof(Fq<mnt6753_pp>) * 2;
+  }
+}
+
+void
+mnt6753_libsnark::read_params_L(mnt6753_libsnark::groth16_params *params, const void *p_) {
+  auto p = static_cast<const char *>(p_);
+  for (size_t i = 0; i < params->m - 1; ++i) {
+    read_g1<mnt6753_pp>(p, (*params->L)[i]);
+    p += sizeof(Fq<mnt6753_pp>) * 2;
+  }
+}
+
+void
+mnt6753_libsnark::read_params_H(mnt6753_libsnark::groth16_params *params, const void *p_) {
+  auto p = static_cast<const char *>(p_);
+  for (size_t i = 0; i < params->d; ++i) {
+    read_g1<mnt6753_pp>(p, (*params->H)[i]);
+    p += sizeof(Fq<mnt6753_pp>) * 2;
+  }
+}
+
+void
+mnt6753_libsnark::read_params_B2(mnt6753_libsnark::groth16_params *params, const void *p_) {
+  auto p = static_cast<const char *>(p_);
+  for (size_t i = 0; i <= params->m; ++i) {
+    read_g2<mnt6753_pp>(p, (*params->B2)[i]);
+    p += sizeof(Fqe<mnt6753_pp>) * 2;
+  }
 }
 
 void mnt6753_libsnark::delete_G1(mnt6753_libsnark::G1 *a) { delete a; }

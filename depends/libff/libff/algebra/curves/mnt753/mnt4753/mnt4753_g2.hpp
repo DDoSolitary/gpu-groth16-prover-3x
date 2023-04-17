@@ -24,9 +24,8 @@ std::ostream& operator<<(std::ostream &, const mnt4753_G2&);
 std::istream& operator>>(std::istream &, mnt4753_G2&);
 
 class mnt4753_G2 {
-private:
-    mnt4753_Fq2 X_, Y_, Z_;
 public:
+    mnt4753_Fq2 X_, Y_, Z_;
 #ifdef PROFILE_OP_COUNTS
     static long long add_cnt;
     static long long dbl_cnt;

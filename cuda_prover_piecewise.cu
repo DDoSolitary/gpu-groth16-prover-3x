@@ -126,16 +126,25 @@ void run_prover(
     size_t m = read_size_t(params_file);
     printf("d = %zu, m = %zu\n", d, m);
 
-    auto A_pts = load_points_affine<ECp>(m + 1, params_file);
-    auto B1_pts = load_points_affine<ECp>(m + 1, params_file);
-    auto B2_pts = load_points_affine<ECpe>(m + 1, params_file);
-    auto L_pts = load_points_affine<ECp>(m - 1, params_file);
+    size_t A_pts_size = ECp::NBYTES_AFF * (m + 1);
+    auto A_pts = allocate_memory(A_pts_size);
+    auto A_pts_h = allocate_host_memory(A_pts_size);
+    size_t B1_pts_size = ECp::NBYTES_AFF * (m + 1);
+    auto B1_pts = allocate_memory(B1_pts_size);
+    auto B1_pts_h = allocate_host_memory(B1_pts_size);
+    size_t B2_pts_size = ECpe::NBYTES_AFF * (m + 1);
+    auto B2_pts = allocate_memory(B2_pts_size);
+    auto B2_pts_h = allocate_host_memory(B2_pts_size);
+    size_t L_pts_size = ECp::NBYTES_AFF * (m - 1);
+    auto L_pts = allocate_memory(L_pts_size);
+    auto L_pts_h = allocate_host_memory(L_pts_size);
+    size_t H_pts_size = ECp::NBYTES_AFF * d;
+    auto H_pts_h = allocate_host_memory(H_pts_size);
 
-    rewind(params_file);
-    auto params = B::read_params(params_file, d, m);
-    fclose(params_file);
-
-    print_time(t, "load params");
+    auto input_w_size = (m + 1) * ELT_BYTES;
+    auto input_others_size = ((d + 1) * 3 + 1) * ELT_BYTES;
+    auto inputs_h = allocate_host_memory<char>(input_w_size + input_others_size);
+    auto w = allocate_memory(input_w_size);
 
     size_t scan_temp_size, scan_out_size;
     ec_multiexp_scan_mem_size<C>(m + 1, &scan_temp_size, &scan_out_size);
@@ -155,35 +164,52 @@ void run_prover(
     auto temp_L = allocate_memory<void>(temp_size_G1);
     auto out_L = allocate_memory<var>(out_size_G1);
 
-    auto out_A_h = allocate_host_memory(ECp::NELTS * ELT_BYTES);
-    auto out_B1_h = allocate_host_memory(ECp::NELTS * ELT_BYTES);
-    auto out_B2_h = allocate_host_memory(ECpe::NELTS * ELT_BYTES);
-    auto out_L_h = allocate_host_memory(ECp::NELTS * ELT_BYTES);
+    auto out_A_h = allocate_host_memory(ECp::NBYTES);
+    auto out_B1_h = allocate_host_memory(ECp::NBYTES);
+    auto out_B2_h = allocate_host_memory(ECpe::NBYTES);
+    auto out_L_h = allocate_host_memory(ECp::NBYTES);
 
     print_time(t, "alloc device mem");
+
+    auto params = B::alloc_params(d, m);
+    fread(A_pts_h.get(), A_pts_size, 1, params_file);
+    CubDebug(cudaMemcpyAsync(A_pts.get(), A_pts_h.get(), A_pts_size, cudaMemcpyHostToDevice));
+    // B::read_params_A(params, A_pts_h.get());
+    fread(B1_pts_h.get(), B1_pts_size, 1, params_file);
+    CubDebug(cudaMemcpyAsync(B1_pts.get(), B1_pts_h.get(), B1_pts_size, cudaMemcpyHostToDevice));
+    B::read_params_B1(params, B1_pts_h.get());
+    fread(B2_pts_h.get(), B2_pts_size, 1, params_file);
+    CubDebug(cudaMemcpyAsync(B2_pts.get(), B2_pts_h.get(), B2_pts_size, cudaMemcpyHostToDevice));
+    // B::read_params_B2(params, B2_pts_h.get());
+    fread(L_pts_h.get(), L_pts_size, 1, params_file);
+    CubDebug(cudaMemcpyAsync(L_pts.get(), L_pts_h.get(), L_pts_size, cudaMemcpyHostToDevice));
+    // B::read_params_L(params, L_pts_h.get());
+    fread(H_pts_h.get(), H_pts_size, 1, params_file);
+    B::read_params_H(params, H_pts_h.get());
+    fclose(params_file);
+    print_time(t, "load params");
 
     auto t_main = t;
 
     FILE *inputs_file = fopen(input_path, "r");
-    auto w_ = load_scalars(m + 1, inputs_file);
-    rewind(inputs_file);
-    auto inputs = B::read_input(inputs_file, d, m);
+    fread(inputs_h.get(), input_w_size, 1, inputs_file);
+    CubDebug(cudaMemcpyAsync(w.get(), inputs_h.get(), input_w_size, cudaMemcpyHostToDevice));
+    fread(inputs_h.get() + input_w_size, input_others_size, 1, inputs_file);
     fclose(inputs_file);
+    auto inputs = B::make_input(inputs_h.get(), d, m);
     print_time(t, "load inputs");
-
-    var *w = w_.get();
 
     auto t_gpu = t;
 
-    ec_multiexp_scan<typename ECp::group_type, C>(w, scan_out.get(), m + 1, scan_temp.get(), scan_temp_size, nullptr);
+    ec_multiexp_scan<typename ECp::group_type, C>(w.get(), scan_out.get(), m + 1, scan_temp.get(), scan_temp_size, nullptr);
     ec_multiexp_pippenger<ECp, C>(A_pts.get(), scan_out.get(), out_A.get(), temp_A.get(), 0, m + 1, sA);
     ec_multiexp_pippenger<ECp, C>(B1_pts.get(), scan_out.get(), out_B1.get(), temp_B1.get(), 0, m + 1, sB1);
     ec_multiexp_pippenger<ECpe, C>(B2_pts.get(), scan_out.get(), out_B2.get(), temp_B2.get(), 0, m + 1, sB2);
     ec_multiexp_pippenger<ECp, C>(L_pts.get(), scan_out.get(), out_L.get(), temp_L.get(), 2, m - 1, sL);
-    CubDebug(cudaMemcpyAsync(out_A_h.get(), out_A.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sA));
-    CubDebug(cudaMemcpyAsync(out_B1_h.get(), out_B1.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sB1));
-    CubDebug(cudaMemcpyAsync(out_B2_h.get(), out_B2.get(), ECpe::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sB2));
-    CubDebug(cudaMemcpyAsync(out_L_h.get(), out_L.get(), ECp::NELTS * ELT_BYTES, cudaMemcpyDeviceToHost, sL));
+    CubDebug(cudaMemcpyAsync(out_A_h.get(), out_A.get(), ECp::NBYTES, cudaMemcpyDeviceToHost, sA));
+    CubDebug(cudaMemcpyAsync(out_B1_h.get(), out_B1.get(), ECp::NBYTES, cudaMemcpyDeviceToHost, sB1));
+    CubDebug(cudaMemcpyAsync(out_B2_h.get(), out_B2.get(), ECpe::NBYTES, cudaMemcpyDeviceToHost, sB2));
+    CubDebug(cudaMemcpyAsync(out_L_h.get(), out_L.get(), ECp::NBYTES, cudaMemcpyDeviceToHost, sL));
     print_time(t_gpu, "gpu launch");
 
     // Do calculations relating to H on CPU after having set the GPU in

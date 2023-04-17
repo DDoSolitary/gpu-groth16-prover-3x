@@ -62,6 +62,7 @@ public:
                          size_t length);
 
   static groth16_input *read_input(FILE *inputs, size_t d, size_t m);
+  static groth16_input *make_input(void *p, size_t d, size_t m);
 
   static vector_Fr *input_w(groth16_input *input);
   static vector_Fr *input_ca(groth16_input *input);
@@ -70,6 +71,13 @@ public:
   static field *input_r(groth16_input *input);
 
   static groth16_params *read_params(FILE *params, size_t d, size_t m);
+  static groth16_params *alloc_params(size_t d, size_t m);
+
+  static void read_params_A(groth16_params *params, const void *p);
+  static void read_params_B1(groth16_params *params, const void *p);
+  static void read_params_L(groth16_params *params, const void *p);
+  static void read_params_H(groth16_params *params, const void *p);
+  static void read_params_B2(groth16_params *params, const void *p);
 
   static size_t params_d(groth16_params *params);
   static size_t params_m(groth16_params *params);
@@ -149,6 +157,7 @@ public:
                          size_t length);
 
   static groth16_input *read_input(FILE *inputs, size_t d, size_t m);
+  static groth16_input *make_input(void *p, size_t d, size_t m);
 
   static vector_Fr *input_w(groth16_input *input);
   static vector_Fr *input_ca(groth16_input *input);
@@ -157,6 +166,13 @@ public:
   static field *input_r(groth16_input *input);
 
   static groth16_params *read_params(FILE *params, size_t d, size_t m);
+  static groth16_params *alloc_params(size_t d, size_t m);
+
+  static void read_params_A(groth16_params *params, const void *p);
+  static void read_params_B1(groth16_params *params, const void *p);
+  static void read_params_L(groth16_params *params, const void *p);
+  static void read_params_H(groth16_params *params, const void *p);
+  static void read_params_B2(groth16_params *params, const void *p);
 
   static size_t params_d(groth16_params *params);
   static size_t params_m(groth16_params *params);

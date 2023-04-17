@@ -2,6 +2,8 @@
 #include <cstdio>
 #include <fstream>
 #include <fstream>
+#include <stdexcept>
+#include <type_traits>
 #include <libff/common/profiling.hpp>
 #include <libff/common/utils.hpp>
 
@@ -19,20 +21,55 @@
 using namespace libff;
 using namespace libsnark;
 
+template<typename T>
+class vec_uninit : public std::vector<T> {
+  static_assert(std::is_trivially_destructible<T>::value, "T must be trivially destructible");
+public:
+  vec_uninit() = default;
+
+  vec_uninit(size_t n) {
+    this->_M_impl._M_start = this->_M_allocate(n);
+    this->_M_impl._M_finish = this->_M_impl._M_end_of_storage = this->_M_impl._M_start + n;
+  }
+
+  void resize_uninit(size_t n) {
+    if (n >= this->size()) {
+      this->reserve(n);
+      this->_M_impl._M_finish = this->_M_impl._M_start + n;
+    } else {
+      this->resize(n);
+    }
+  }
+};
+
+// be careful not to trigger re-allocation
+template<typename T>
+class vec_ptr : public std::vector<T> {
+public:
+  vec_ptr(void *p, size_t n) {
+    this->_M_impl._M_start = reinterpret_cast<T *>(p);
+    this->_M_impl._M_finish = this->_M_impl._M_end_of_storage = this->_M_impl._M_start + n;
+  }
+
+  ~vec_ptr() {
+    this->_M_impl._M_start = this->_M_impl._M_finish = this->_M_impl._M_end_of_storage = nullptr;
+  }
+};
+
 const size_t num_limbs = 12;
 
 template<typename ppT>
-void write_fq(FILE* output, Fq<ppT> x) {
+void write_fq(FILE* output, const Fq<ppT> &x) {
   fwrite((void *) x.mont_repr.data, num_limbs * sizeof(mp_size_t), 1, output);
 }
 
 template<typename ppT>
-void write_fr(FILE* output, Fr<ppT> x) {
+void write_fr(FILE* output, const Fr<ppT> &x) {
   fwrite((void *) x.mont_repr.data, num_limbs * sizeof(mp_size_t), 1, output);
 }
 
 template<typename ppT>
-void write_fqe(FILE* output, Fqe<ppT> x) {
+void write_fqe(FILE* output, const Fqe<ppT> &x) {
   std::vector<Fq<ppT>> v = x.all_base_field_elements();
   size_t deg = Fqe<ppT>::extension_degree();
   for (size_t i = 0; i < deg; ++i) {
@@ -67,47 +104,77 @@ void write_g2(FILE* output, G2<ppT> g) {
 }
 
 template<typename ppT>
-Fq<ppT> read_fq(FILE* input) {
-  Fq<ppT> x;
+void read_fq(FILE* input, Fq<ppT> &x) {
   fread((void *) x.mont_repr.data, num_limbs * sizeof(mp_size_t), 1, input);
-  return x;
 }
 
 template<typename ppT>
-Fr<ppT> read_fr(FILE* input) {
-  Fr<ppT> x;
+void read_fq(const void* input, Fq<ppT> &x) {
+  memcpy((void *) x.mont_repr.data, input, num_limbs * sizeof(mp_size_t));
+}
+
+template<typename ppT>
+void read_fr(FILE* input, Fr<ppT> &x) {
   fread((void *) x.mont_repr.data, num_limbs * sizeof(mp_size_t), 1, input);
-  return x;
 }
 
 template<typename ppT>
-G1<ppT> read_g1(FILE* input) {
-  Fq<ppT> x = read_fq<ppT>(input);
-  Fq<ppT> y = read_fq<ppT>(input);
-  if (y == Fq<ppT>::zero()) {
-    return G1<ppT>::zero();
-  }
-  return G1<ppT>(x, y, Fq<ppT>::one());
+void read_fr(const void* input, Fq<ppT> &x) {
+  memcpy((void *) x.mont_repr.data, input, num_limbs * sizeof(mp_size_t));
 }
 
 template<typename ppT>
-Fqe<ppT> read_fqe(FILE* input) {
-  std::vector<Fq<ppT>> elts;
-  size_t deg = Fqe<ppT>::extension_degree();
-  for (size_t i = 0; i < deg; ++i) {
-    elts.emplace_back(read_fq<ppT>(input));
+void read_g1(FILE* input, G1<ppT> &g) {
+  read_fq<ppT>(input, g.X_);
+  read_fq<ppT>(input, g.Y_);
+  if (g.Y_.is_zero()) {
+    g = G1<ppT>::zero();
+  } else {
+    g.Z_ = Fq<ppT>::one();
   }
-  return Fqe<ppT>(elts);
 }
 
 template<typename ppT>
-G2<ppT> read_g2(FILE* input) {
-  Fqe<ppT> x = read_fqe<ppT>(input);
-  Fqe<ppT> y = read_fqe<ppT>(input);
-  if (y == Fqe<ppT>::zero()) {
-    return G2<ppT>::zero();
+void read_g1(const void* input, G1<ppT> &g) {
+  read_fq<ppT>(input, g.X_);
+  read_fq<ppT>(static_cast<const char *>(input) + sizeof(Fq<ppT>), g.Y_);
+  if (g.Y_.is_zero()) {
+    g = G1<ppT>::zero();
+  } else {
+    g.Z_ = Fq<ppT>::one();
   }
-  return G2<ppT>(x, y, Fqe<ppT>::one());
+}
+
+template<typename ppT>
+void read_fqe(FILE* input, Fqe<ppT> &x) {
+  fread(&x, sizeof(Fqe<ppT>), 1, input);
+}
+
+template<typename ppT>
+void read_fqe(const void* input, Fqe<ppT> &x) {
+  memcpy(&x, input, sizeof(Fqe<ppT>));
+}
+
+template<typename ppT>
+G2<ppT> read_g2(FILE* input, G2<ppT> &g) {
+  read_fqe<ppT>(input, g.X_);
+  read_fqe<ppT>(input, g.Y_);
+  if (g.Y_.is_zero()) {
+    g = G2<ppT>::zero();
+  } else {
+    g.Z_ = Fqe<ppT>::one();
+  }
+}
+
+template<typename ppT>
+void read_g2(const void* input, G2<ppT> &g) {
+  read_fqe<ppT>(input, g.X_);
+  read_fqe<ppT>(static_cast<const char *>(input) + sizeof(Fqe<ppT>), g.Y_);
+  if (g.Y_.is_zero()) {
+    g = G2<ppT>::zero();
+  } else {
+    g.Z_ = Fqe<ppT>::one();
+  }
 }
 
 size_t read_size_t(FILE* input) {

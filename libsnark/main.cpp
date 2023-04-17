@@ -29,18 +29,23 @@ class groth16_parameters {
   public:
     size_t d;
     size_t m;
-    std::vector<G1<ppT>> A, B1, L, H;
-    std::vector<G2<ppT>> B2;
+    vec_uninit<G1<ppT>> A, B1, L, H;
+    vec_uninit<G2<ppT>> B2;
 
   groth16_parameters(const char* path) {
     FILE* params = fopen(path, "r");
     d = read_size_t(params);
     m = read_size_t(params);
-    for (size_t i = 0; i <= m; ++i) { A.emplace_back(read_g1<ppT>(params)); }
-    for (size_t i = 0; i <= m; ++i) { B1.emplace_back(read_g1<ppT>(params)); }
-    for (size_t i = 0; i <= m; ++i) { B2.emplace_back(read_g2<ppT>(params)); }
-    for (size_t i = 0; i < m-1; ++i) { L.emplace_back(read_g1<ppT>(params)); }
-    for (size_t i = 0; i < d; ++i) { H.emplace_back(read_g1<ppT>(params)); }
+    A.resize_uninit(m + 1);
+    B1.resize_uninit(m + 1);
+    B2.resize_uninit(m + 1);
+    L.resize_uninit(m - 1);
+    H.resize_uninit(d);
+    for (size_t i = 0; i <= m; ++i) { read_g1<ppT>(params, A[i]); }
+    for (size_t i = 0; i <= m; ++i) { read_g1<ppT>(params, B1[i]); }
+    for (size_t i = 0; i <= m; ++i) { read_g2<ppT>(params, B2[i]); }
+    for (size_t i = 0; i < m - 1; ++i) { read_g1<ppT>(params, L[i]); }
+    for (size_t i = 0; i < d; ++i) { read_g1<ppT>(params, H[i]); }
     fclose(params);
   }
 };
@@ -48,20 +53,20 @@ class groth16_parameters {
 template<typename ppT>
 class groth16_input {
   public:
-    std::vector<Fr<ppT>> w;
-    std::vector<Fr<ppT>> ca, cb, cc;
+    vec_uninit<Fr<ppT>> w;
+    vec_uninit<Fr<ppT>> ca, cb, cc;
     Fr<ppT> r;
 
-  groth16_input(const char* path, size_t d, size_t m) {
+  groth16_input(const char* path, size_t d, size_t m) : w(m + 1), ca(d + 1), cb(d + 1), cc(d + 1) {
     FILE* inputs = fopen(path, "r");
 
-    for (size_t i = 0; i < m + 1; ++i) { w.emplace_back(read_fr<ppT>(inputs)); }
+    for (size_t i = 0; i < m + 1; ++i) { read_fr<ppT>(inputs, w[i]); }
 
-    for (size_t i = 0; i < d + 1; ++i) { ca.emplace_back(read_fr<ppT>(inputs)); }
-    for (size_t i = 0; i < d + 1; ++i) { cb.emplace_back(read_fr<ppT>(inputs)); }
-    for (size_t i = 0; i < d + 1; ++i) { cc.emplace_back(read_fr<ppT>(inputs)); }
+    for (size_t i = 0; i < d + 1; ++i) { read_fr<ppT>(inputs, ca[i]); }
+    for (size_t i = 0; i < d + 1; ++i) { read_fr<ppT>(inputs, cb[i]); }
+    for (size_t i = 0; i < d + 1; ++i) { read_fr<ppT>(inputs, cc[i]); }
 
-    r = read_fr<ppT>(inputs);
+    read_fr<ppT>(inputs, r);
 
     fclose(inputs);
   }

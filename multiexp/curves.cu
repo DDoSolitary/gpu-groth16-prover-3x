@@ -19,8 +19,10 @@ struct ec_jac {
 
     static constexpr int NELTS = 3 * FF::DEGREE; // *3 for x, y and z
     static constexpr int NLIMBS = NELTS * ELT_LIMBS;
+    static constexpr int NBYTES = NELTS * ELT_BYTES;
     static constexpr int NELTS_AFF = 2 * FF::DEGREE;
     static constexpr int NLIMBS_AFF = NELTS_AFF * ELT_LIMBS;
+    static constexpr int NBYTES_AFF = NELTS_AFF * ELT_BYTES;
 
     __device__
     static void
