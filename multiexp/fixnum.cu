@@ -122,6 +122,11 @@ public:
         return (cub::WARP_BALLOT(val, mask) & mask) >> off;
     }
 
+    __device__ __forceinline__
+    Mask all(int val) {
+        return cub::WARP_ALL(val, mask);
+    }
+
     template<typename T>
     __device__ __forceinline__
     T shfl(T val, int src) {
@@ -201,12 +206,8 @@ struct fixnum {
         sub_br(r, br_lo, a, b);
     }
 
-    __device__ static auto nonzero_mask(var r) {
-        return fixnum::layout().ballot( ! digit::is_zero(r));
-    }
-
     __device__ static int is_zero(var r) {
-        return nonzero_mask(r) == 0U;
+        return fixnum::layout().all(digit::is_zero(r));
     }
 
     __device__ static int cmp(var x, var y) {
@@ -214,7 +215,7 @@ struct fixnum {
         int br;
         sub_br(r, br, x, y);
         // r != 0 iff x != y. If x != y, then br != 0 => x < y.
-        return nonzero_mask(r) ? (br ? -1 : 1) : 0;
+        return is_zero(r) ? 0 : (br ? -1 : 1);
     }
 
     __device__
