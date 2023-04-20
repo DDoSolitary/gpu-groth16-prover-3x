@@ -125,23 +125,25 @@ void read_fr(const void* input, Fq<ppT> &x) {
 
 template<typename ppT>
 void read_g1(FILE* input, G1<ppT> &g) {
+  static auto one = Fq<ppT>::one();
   read_fq<ppT>(input, g.X_);
   read_fq<ppT>(input, g.Y_);
   if (g.Y_.is_zero()) {
     g = G1<ppT>::zero();
   } else {
-    g.Z_ = Fq<ppT>::one();
+    g.Z_ = one;
   }
 }
 
 template<typename ppT>
 void read_g1(const void* input, G1<ppT> &g) {
+  static auto one = Fq<ppT>::one();
   read_fq<ppT>(input, g.X_);
   read_fq<ppT>(static_cast<const char *>(input) + sizeof(Fq<ppT>), g.Y_);
   if (g.Y_.is_zero()) {
     g = G1<ppT>::zero();
   } else {
-    g.Z_ = Fq<ppT>::one();
+    g.Z_ = one;
   }
 }
 
@@ -157,23 +159,25 @@ void read_fqe(const void* input, Fqe<ppT> &x) {
 
 template<typename ppT>
 G2<ppT> read_g2(FILE* input, G2<ppT> &g) {
+  static auto one = Fqe<ppT>::one();
   read_fqe<ppT>(input, g.X_);
   read_fqe<ppT>(input, g.Y_);
   if (g.Y_.is_zero()) {
     g = G2<ppT>::zero();
   } else {
-    g.Z_ = Fqe<ppT>::one();
+    g.Z_ = one;
   }
 }
 
 template<typename ppT>
 void read_g2(const void* input, G2<ppT> &g) {
+  static auto one = Fqe<ppT>::one();
   read_fqe<ppT>(input, g.X_);
   read_fqe<ppT>(static_cast<const char *>(input) + sizeof(Fqe<ppT>), g.Y_);
   if (g.Y_.is_zero()) {
     g = G2<ppT>::zero();
   } else {
-    g.Z_ = Fqe<ppT>::one();
+    g.Z_ = one;
   }
 }
 

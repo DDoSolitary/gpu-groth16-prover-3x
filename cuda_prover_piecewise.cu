@@ -177,7 +177,7 @@ void run_prover(
     // B::read_params_A(params, A_pts_h.get());
     fread(B1_pts_h.get(), B1_pts_size, 1, params_file);
     CubDebug(cudaMemcpyAsync(B1_pts.get(), B1_pts_h.get(), B1_pts_size, cudaMemcpyHostToDevice));
-    B::read_params_B1(params, B1_pts_h.get());
+    // B::read_params_B1(params, B1_pts_h.get());
     fread(B2_pts_h.get(), B2_pts_size, 1, params_file);
     CubDebug(cudaMemcpyAsync(B2_pts.get(), B2_pts_h.get(), B2_pts_size, cudaMemcpyHostToDevice));
     // B::read_params_B2(params, B2_pts_h.get());
