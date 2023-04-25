@@ -284,18 +284,11 @@ ec_multiexp_bucket_reduce_next(const var *in, var *out, int m) {
     EC::load_jac(x, cur_in + i * EC::NLIMBS);
     EC::load_jac(y, cur_in + (i + n) * EC::NLIMBS);
     EC::add(x, x, y);
-
-    if (n == 1) {
-        for (int i = 0; i < win * C::WIN_BITS; i++) {
-            EC::dbl(x, x);
-        }
-    }
-
     EC::store_jac(out + idx * EC::NLIMBS, x);
 }
 
 // simple parallel sum
-template<typename EC>
+template<typename EC, typename C>
 __global__ void
 ec_multiexp_window_reduce(const var *in, var *out, int m)
 {
@@ -309,6 +302,9 @@ ec_multiexp_window_reduce(const var *in, var *out, int m)
     EC::load_jac(x, in + idx * EC::NLIMBS);
     if (idx + n < m) {
         EC::load_jac(y, in + (idx + n) * EC::NLIMBS);
+        for (int i = 0; i < n * C::WIN_BITS; i++) {
+            EC::dbl(y, y);
+        }
         EC::add(x, x, y);
     }
     EC::store_jac(out + idx * EC::NLIMBS, x);
@@ -353,7 +349,7 @@ ec_multiexp_pippenger(const var *pts, const int *bucket_info, var *out, void *te
     for (int i = C::NWIN; i > 1; i = (i + 1) / 2) {
         nblocks = CUB_QUOTIENT_CEILING((i + 1) / 2, C::ELTS_PER_BLOCK);
         auto cur_out = i == 2 ? out : temp2; // write to output buffer on the last iteration
-        ec_multiexp_window_reduce<EC><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(temp2, cur_out, i);
+        ec_multiexp_window_reduce<EC, C><<<nblocks, C::THREADS_PER_BLOCK, 0, stream>>>(temp2, cur_out, i);
     }
     CubDebug(cudaGetLastError());
 }
