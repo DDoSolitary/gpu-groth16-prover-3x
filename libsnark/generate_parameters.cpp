@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstdio>
 #include <fstream>
+#include <string>
 
 #include <libff/common/rng.hpp>
 #include <libff/common/profiling.hpp>
@@ -124,14 +125,7 @@ int generate_paramaters(
 
 int main(int argc, const char * argv[])
 {
-  int log2_d_4753 = 20, log2_d_6753 = 15;
-  if (argc > 1) {
-    std::string fastflag(argv[1]);
-    if (fastflag == "fast") {
-      log2_d_4753 = 14;
-      log2_d_6753 = 10;
-    }
-  }
+  int log2_d_4753 = std::stoi(argv[1]), log2_d_6753 = std::stoi(argv[2]);
   generate_paramaters<mnt4753_pp>(log2_d_4753, "MNT4753-parameters", "MNT4753-input");
   generate_paramaters<mnt6753_pp>(log2_d_6753, "MNT6753-parameters", "MNT6753-input");
 }
