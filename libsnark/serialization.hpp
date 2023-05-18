@@ -158,7 +158,7 @@ void read_fqe(const void* input, Fqe<ppT> &x) {
 }
 
 template<typename ppT>
-G2<ppT> read_g2(FILE* input, G2<ppT> &g) {
+void read_g2(FILE* input, G2<ppT> &g) {
   static auto one = Fqe<ppT>::one();
   read_fqe<ppT>(input, g.X_);
   read_fqe<ppT>(input, g.Y_);
